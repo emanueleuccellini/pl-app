@@ -361,7 +361,7 @@ let syncMode = 'local';
 const LS_KEY = 'cassa-ledger-v2';
 const GH_KEY = 'cassa-github-v1';
 const DOCS = ['accounts','recurring','history','settings'];
-const APP_VERSION = 'v563e225c';
+const APP_VERSION = 'v285ec4db';
 
 const ghCfg = () => { try { return JSON.parse(localStorage.getItem(GH_KEY)||'null'); } catch(e){ return null; } };
 const setGhCfg = c => { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch(e){} };
@@ -829,7 +829,7 @@ function renderSettings(){
     </div>
   </div>
   <div class="card" style="margin-top:14px"><h3>EA assistant</h3>
-    <p class="small muted" style="margin:6px 0 10px">The EA tab uses Claude through your own Anthropic API key (console.anthropic.com → API keys). The key stays on this device; each message costs a fraction of a cent.</p>
+    <p class="small muted" style="margin:6px 0 10px">The EA tab uses Claude through your own Anthropic API key (console.anthropic.com → API keys). The key is saved with your data in your private repository, so every connected device can use it; each message costs a fraction of a cent.</p>
     <div class="f2"><div class="f"><label for="s-eakey">Anthropic API key</label><input id="s-eakey" type="password" value="${esc(eaCfg().key||'')}" placeholder="sk-ant-…" autocomplete="off"></div><div class="f"><label for="s-eamodel">Model</label><input id="s-eamodel" type="text" value="${esc(eaCfg().model||'claude-sonnet-5')}"></div></div>
   </div>
   <div class="card" id="lock-card" style="margin-top:14px"><h3>Lock on this device</h3><p class="small muted">Checking what this device supports…</p></div>
@@ -1006,14 +1006,21 @@ function applyUpdate(d){
 
 /* ---------------- EA — in-app assistant (Claude API) ---------------- */
 const EA_KEY = 'pl-app-ea-v1';
-const eaCfg = () => { try { return JSON.parse(localStorage.getItem(EA_KEY)||'null') || {}; } catch(e){ return {}; } };
-const setEaCfg = c => { try { localStorage.setItem(EA_KEY, JSON.stringify(c)); } catch(e){} };
+const eaCfg = () => { let local = {}; try { local = JSON.parse(localStorage.getItem(EA_KEY)||'null') || {}; } catch(e){} return { key: state.settings.eaKey || local.key || '', model: state.settings.eaModel || local.model || 'claude-sonnet-5' }; };
+const setEaCfg = c => { state.settings.eaKey = c.key || ''; state.settings.eaModel = c.model || 'claude-sonnet-5'; try { localStorage.setItem(EA_KEY, JSON.stringify(c)); } catch(e){} save('settings'); };
 let eaHist = (() => { try { return JSON.parse(localStorage.getItem(EA_KEY+'-hist')||'[]'); } catch(e){ return []; } })();
 const eaSaveHist = () => { try { localStorage.setItem(EA_KEY+'-hist', JSON.stringify(eaHist.slice(-60))); } catch(e){} };
 let eaBusy = false;
 
+function monthlyTable(){
+  const months = Object.keys(state.tx).sort(); const rows = [];
+  for (const m of months){ const cat = {}; let inc = 0, spend = 0; for (const t of state.tx[m]){ if (t.category==='Transfer'||t.category==='Investment') continue; if (t.amount<0){ spend -= t.amount; cat[t.category]=(cat[t.category]||0)-t.amount; } else inc += t.amount; }
+    rows.push(`${m}: spend ${Math.round(spend)}, income ${Math.round(inc)} | ` + Object.entries(cat).sort((a,b)=>b[1]-a[1]).map(([c,v])=>`${c} ${Math.round(v)}`).join(', ')); }
+  return rows.join('\n');
+}
 function eaContext(){
   const t = today(); const pr = projection(); const nw = netWorth();
+  const all = allTx(); const first = all.length ? all.map(x=>x.date).sort()[0] : null;
   const cats = byCategory(allTx().filter(x => x.date >= iso(addDays(t,-30)))).slice(0,8).map(([c,v])=>`${c} ${fmt(v)}`).join(', ');
   const recent = allTx().sort((a,b)=>b.date.localeCompare(a.date)).slice(0,25).map(x=>`${x.date} ${x.desc.slice(0,40)} ${x.amount.toFixed(2)} [${x.category}]`).join('\n');
   return `Today: ${iso(t)} (${t.toLocaleDateString('en-US',{weekday:'long'})}). Currency USD.
@@ -1024,12 +1031,17 @@ RECURRING ITEMS (name | type | amount | freq | day | anchor | until | category |
 ${state.recurring.map(r=>`${r.name} | ${r.type} | ${r.amount} | ${r.freq} | ${r.day||''} | ${r.anchor||''} | ${r.until||''} | ${r.category} | ${r.active!==false}`).join('\n') || '(none)'}
 PROJECTION next ${pr.weeks.length} weeks: lowest cash ${fmt(pr.low.balance)} in week of ${pr.low.start}; ending ${fmt(pr.weeks[pr.weeks.length-1]?.balance||0)}.
 Weeks (start | in | out | end balance): ${pr.weeks.map(w=>`${w.start} | ${Math.round(w.inflow)} | ${Math.round(w.outflow)} | ${Math.round(w.balance)}`).join('; ')}
+TRANSACTION HISTORY: ${all.length} transactions from ${first||'—'} to ${iso(t)} are stored in the app (Amex card + Fidelity account). You can query any of them with the tools.
+MONTHLY TOTALS (spending excludes Transfer and Investment; amounts in USD):
+${monthlyTable() || '(none)'}
 SPENDING last 30 days by category: ${cats || '(none)'}
-RECENT TRANSACTIONS:
+MOST RECENT TRANSACTIONS:
 ${recent || '(none)'}
 Settings: week starts ${state.settings.weekStart==0?'Sunday':'Monday'}, horizon ${state.settings.horizon} weeks.`;
 }
 const EA_SYSTEM = `You are "EA", the executive assistant inside Emanuele's personal finance app (P&L App). He texts you short instructions or questions about his household finances. You answer briefly and precisely, like a sharp chief of staff, and when he asks for a change you propose it as a structured update that the app applies after he taps Apply.
+
+You have the household's full transaction history (typically two years of Amex and Fidelity activity) — never say you only see recent data. The monthly totals are in your context; for anything finer (a merchant, a category in a given period, an average per month) call search_transactions or monthly_totals before answering, and give figures rounded to the dollar with the period you used.
 
 Rules:
 - Amounts are USD. Money out is an expense; money in is income. Never invent figures: if something is ambiguous (which account, which date, one-off or recurring), ask one short question instead of guessing.
@@ -1052,6 +1064,19 @@ const EA_TOOL = { name:'ea_reply', description:'Reply to the user and optionally
   }}] }
 }, required:['reply','update'] } };
 
+const EA_DATA_TOOLS = [
+  { name:'search_transactions', description:'Search stored transactions. Returns count, total, and up to 60 matching rows (newest first). Amounts: negative = money out.', input_schema:{ type:'object', properties:{ from:{type:'string',description:'YYYY-MM-DD inclusive'}, to:{type:'string',description:'YYYY-MM-DD inclusive'}, category:{type:'string'}, search:{type:'string',description:'case-insensitive text in the description'}, account:{type:'string'}, direction:{type:'string',enum:['out','in','all']}, limit:{type:'integer'} } } },
+  { name:'monthly_totals', description:'Monthly totals (spending, income) optionally filtered by category and/or description text, over a date range. Spending excludes Transfer and Investment unless a category is given.', input_schema:{ type:'object', properties:{ from:{type:'string'}, to:{type:'string'}, category:{type:'string'}, search:{type:'string'} } } }
+];
+function eaRunTool(name, inp){
+  const rows = allTx().filter(t => (!inp.from || t.date >= inp.from) && (!inp.to || t.date <= inp.to) && (!inp.category || t.category.toLowerCase()===String(inp.category).toLowerCase()) && (!inp.search || t.desc.toLowerCase().includes(String(inp.search).toLowerCase())) && (!inp.account || (t.account||'').toLowerCase().includes(String(inp.account).toLowerCase())));
+  if (name==='search_transactions'){ const dir = inp.direction||'all'; const r = rows.filter(t => dir==='all' || (dir==='out' ? t.amount<0 : t.amount>0)).sort((a,b)=>b.date.localeCompare(a.date)); const total = sum(r.map(t=>t.amount));
+    return { count: r.length, total: +total.toFixed(2), rows: r.slice(0, Math.min(+inp.limit||60, 100)).map(t=>({date:t.date, desc:t.desc, amount:t.amount, category:t.category, account:t.account||''})) }; }
+  if (name==='monthly_totals'){ const byM = {}; for (const t of rows){ if (!inp.category && (t.category==='Transfer'||t.category==='Investment')) continue; const m = monthKey(t.date); byM[m] ||= {month:m, spending:0, income:0, count:0}; if (t.amount<0) byM[m].spending += -t.amount; else byM[m].income += t.amount; byM[m].count++; }
+    const list = Object.values(byM).sort((a,b)=>a.month.localeCompare(b.month)).map(x=>({...x, spending:+x.spending.toFixed(2), income:+x.income.toFixed(2)})); const n = list.length;
+    return { months: list, average_spending_per_month: n ? +(sum(list.map(x=>x.spending))/n).toFixed(2) : 0, months_counted: n }; }
+  return { error: 'unknown tool' };
+}
 function describeUpdate(u){
   if (!u) return ''; const L = [];
   (u.accountsUpsert||[]).forEach(a => L.push(`Account “${a.name}”${a.balance!=null?` → balance ${fmt(a.balance)}`:''}${a.kind?` (${a.kind})`:''}`));
@@ -1069,11 +1094,20 @@ async function eaSend(text){
   eaHist.push({role:'user', content:text}); eaSaveHist(); eaBusy = true; render();
   try {
     const msgs = eaHist.slice(-20).map(m => ({role:m.role, content: m.role==='assistant' ? (m.content + (m.update ? '\n[proposed update: '+JSON.stringify(m.update)+']' : '')) : m.content}));
-    const r = await fetch('https://api.anthropic.com/v1/messages', { method:'POST', headers:{ 'content-type':'application/json', 'x-api-key': cfg.key, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
-      body: JSON.stringify({ model: cfg.model || 'claude-sonnet-5', max_tokens: 1200, system: EA_SYSTEM + '\n\nCURRENT DATA:\n' + eaContext(), messages: msgs, tools:[EA_TOOL], tool_choice:{type:'tool', name:'ea_reply'} }) });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.error?.message || ('HTTP '+r.status));
-    const tu = (j.content||[]).find(c => c.type==='tool_use'); const out = tu ? tu.input : {reply:(j.content||[]).map(c=>c.text||'').join(''), update:null};
+    const system = EA_SYSTEM + '\n\nCURRENT DATA:\n' + eaContext();
+    let out = null;
+    for (let round = 0; round < 6 && !out; round++){
+      const r = await fetch('https://api.anthropic.com/v1/messages', { method:'POST', headers:{ 'content-type':'application/json', 'x-api-key': cfg.key, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
+        body: JSON.stringify({ model: cfg.model || 'claude-sonnet-5', max_tokens: 1500, system, messages: msgs, tools:[...EA_DATA_TOOLS, EA_TOOL], tool_choice: round < 5 ? {type:'any'} : {type:'tool', name:'ea_reply'} }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error?.message || ('HTTP '+r.status));
+      const uses = (j.content||[]).filter(c => c.type==='tool_use');
+      const final = uses.find(u => u.name==='ea_reply');
+      if (final){ out = final.input; break; }
+      if (!uses.length){ out = {reply:(j.content||[]).map(c=>c.text||'').join('') || '(no reply)', update:null}; break; }
+      msgs.push({role:'assistant', content: j.content});
+      msgs.push({role:'user', content: uses.map(u => ({ type:'tool_result', tool_use_id: u.id, content: JSON.stringify(eaRunTool(u.name, u.input||{})) })) });
+    }
     const upd = out.update && Object.keys(out.update).length ? out.update : null;
     eaHist.push({role:'assistant', content: out.reply || '(no reply)', update: upd, applied:false, ts: Date.now()});
   } catch(e){ eaHist.push({role:'assistant', content: 'I could not reach the assistant: ' + (e.message||e) + (/api key|authentication|401/i.test(String(e.message))?' — check the API key in Settings.':''), error:true}); }
