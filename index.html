@@ -361,7 +361,7 @@ let syncMode = 'local';
 const LS_KEY = 'cassa-ledger-v2';
 const GH_KEY = 'cassa-github-v1';
 const DOCS = ['accounts','recurring','history','settings'];
-const APP_VERSION = 'v285ec4db';
+const APP_VERSION = 'v5e9b437a';
 
 const ghCfg = () => { try { return JSON.parse(localStorage.getItem(GH_KEY)||'null'); } catch(e){ return null; } };
 const setGhCfg = c => { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch(e){} };
@@ -1119,13 +1119,15 @@ function renderEA(){
     const ops = describeUpdate(m.update);
     return `<div class="msg ea"><div class="b ${m.error?'err':''}">${esc(m.content)}${ops.length?`<div class="upd"><div class="upd-t">${m.applied?'Applied':'Proposed change'}</div><ul>${ops.map(o=>`<li>${esc(o)}</li>`).join('')}</ul>${m.applied?'':`<div class="actions"><button class="btn small primary" data-act="eaApply" data-i="${i}">Apply</button><button class="btn small ghost" data-act="eaDiscard" data-i="${i}">Discard</button></div>`}</div>`:''}</div></div>`; };
   return `
-  <div class="page-head"><div><h1>EA</h1><p>${cfg.key ? 'Text small changes or questions — “rent is $7,200 from January”, “add $650 vet on Sep 12”, “what’s my lowest week?”' : 'Your executive assistant for quick changes. Add an Anthropic API key in Settings to switch it on.'}</p></div>
+  <div class="page-head"><div><h1>EA</h1><p>${cfg.key ? 'Text small changes or questions — “rent is $7,200 from January”, “add $650 vet on Sep 12”, “what’s my lowest week?”' : 'Your executive assistant for quick changes and questions about your numbers.'}</p></div>
     <div class="actions">${eaHist.length?'<button class="btn small ghost" data-act="eaClear">Clear chat</button>':''}</div></div>
+  ${cfg.key ? '' : `<div class="card" style="margin-bottom:14px"><h3>Switch EA on</h3><p class="small muted" style="margin:6px 0 10px">Paste your Anthropic API key (console.anthropic.com → API keys). It is saved with your data, so you only do this once for all devices.</p><form id="ea-keyform" class="f2" style="align-items:end"><div class="f"><label for="ea-key">API key</label><input id="ea-key" type="password" placeholder="sk-ant-…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" style="font-size:16px"></div><button class="btn primary" type="submit">Save key</button></form></div>`}
   <div class="chat" id="chat">${eaHist.map(bubble).join('') || '<div class="empty">No messages yet. Try: “Move the Amex payment to the 5th” or “Groceries are closer to $500 a week”.</div>'}${eaBusy?'<div class="msg ea"><div class="b typing">Thinking…</div></div>':''}</div>
-  <form class="composer" id="composer"><input id="ea-in" type="text" placeholder="${cfg.key?'Message EA…':'Add an API key in Settings first'}" autocomplete="off" ${cfg.key&&!eaBusy?'':'disabled'}><button class="btn primary" type="submit" ${cfg.key&&!eaBusy?'':'disabled'}>Send</button></form>`;
+  <form class="composer" id="composer"><input id="ea-in" type="text" placeholder="${cfg.key?'Message EA…':'Save your API key above, then type here'}" autocomplete="off" autocapitalize="sentences" ${eaBusy?'disabled':''}><button class="btn primary" type="submit" ${eaBusy?'disabled':''}>Send</button></form>`;
 }
 function eaAfterRender(){
-  const f = $('#composer'); if (f) f.onsubmit = e => { e.preventDefault(); const v = $('#ea-in').value.trim(); if (!v) return; $('#ea-in').value=''; eaSend(v); };
+  const kf = $('#ea-keyform'); if (kf) kf.onsubmit = e => { e.preventDefault(); const k = $('#ea-key').value.trim(); if (!/^sk-ant-/.test(k)){ toast('That does not look like an Anthropic key (starts with sk-ant-)'); return; } setEaCfg({key:k, model: eaCfg().model}); toast('EA is on'); render(); };
+  const f = $('#composer'); if (f) f.onsubmit = e => { e.preventDefault(); const v = $('#ea-in').value.trim(); if (!v) return; if (!eaCfg().key){ toast('Save your API key first (box above)'); const k=$('#ea-key'); if (k) k.focus(); return; } $('#ea-in').value=''; eaSend(v); };
   const c = $('#chat'); if (c) c.scrollTop = c.scrollHeight;
   const inp = $('#ea-in'); if (inp && !eaBusy && window.innerWidth >= 640) inp.focus();
 }
@@ -1231,7 +1233,7 @@ if ('serviceWorker' in navigator){ navigator.serviceWorker.register('./sw.js').t
 window.addEventListener('online', () => syncFromGitHub(true));
 showLock();
 window.__cassa = { get state(){ return state; }, projection, netWorth, save, syncFromGitHub };
-loadAll().then(() => { render(); }).catch(e => { console.error(e); state.loaded = true; render(); });
+loadAll().then(() => { try { const local = JSON.parse(localStorage.getItem(EA_KEY)||'null'); if (local && local.key && !state.settings.eaKey){ state.settings.eaKey = local.key; state.settings.eaModel = local.model || 'claude-sonnet-5'; save('settings'); } } catch(e){} render(); }).catch(e => { console.error(e); state.loaded = true; render(); });
 })();
 </script>
 
