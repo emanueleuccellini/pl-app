@@ -81,7 +81,7 @@ a{color:var(--accent)}
 .main{min-width:0;padding:22px 28px calc(var(--tab-h) + env(safe-area-inset-bottom,0px) + 28px);max-width:1240px;margin:0 auto}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--surface) 88%,transparent);backdrop-filter:saturate(1.4) blur(10px);-webkit-backdrop-filter:saturate(1.4) blur(10px);border-bottom:1px solid var(--line);padding:10px 20px;height:var(--nav-h)}
 .topbar .tabs{display:none}
-.tabbar{display:grid;grid-template-columns:repeat(5,1fr);position:fixed;left:0;right:0;bottom:0;z-index:20;background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:saturate(1.4) blur(12px);-webkit-backdrop-filter:saturate(1.4) blur(12px);border-top:1px solid var(--line);padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px));height:calc(var(--tab-h) + env(safe-area-inset-bottom,0px));max-width:720px;margin:0 auto;border-radius:14px 14px 0 0;border-left:1px solid var(--line);border-right:1px solid var(--line)}
+.tabbar{display:grid;grid-template-columns:repeat(6,1fr);position:fixed;left:0;right:0;bottom:0;z-index:20;background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:saturate(1.4) blur(12px);-webkit-backdrop-filter:saturate(1.4) blur(12px);border-top:1px solid var(--line);padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px));height:calc(var(--tab-h) + env(safe-area-inset-bottom,0px));max-width:720px;margin:0 auto;border-radius:14px 14px 0 0;border-left:1px solid var(--line);border-right:1px solid var(--line)}
 .tabbar button{border:0;background:transparent;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;font-weight:600;color:var(--ink-3);cursor:pointer;padding:4px 0;border-radius:8px}
 .tabbar button svg{width:22px;height:22px}
 .tabbar button:hover{color:var(--ink)}
@@ -201,6 +201,21 @@ tr.tot td{font-weight:700;border-top:2px solid var(--line);background:var(--surf
 details.help{margin-top:8px;font-size:13.5px;color:var(--ink-2)}
 details.help summary{cursor:pointer;font-weight:600;color:var(--ink)}
 kbd{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:var(--surface-2);padding:1px 5px;border-radius:4px}
+
+/* ---------- EA chat ---------- */
+.chat{display:flex;flex-direction:column;gap:10px;padding:4px 0 12px;min-height:40vh}
+.msg{display:flex}
+.msg.me{justify-content:flex-end}
+.msg .b{max-width:min(80%,560px);padding:10px 14px;border-radius:16px;background:var(--surface);border:1px solid var(--line-soft);line-height:1.4;white-space:pre-wrap;word-break:break-word}
+.msg.me .b{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);border-bottom-right-radius:4px}
+.msg.ea .b{border-bottom-left-radius:4px}
+.msg .b.err{background:var(--bad-soft);border-color:color-mix(in srgb,var(--bad) 30%,transparent)}
+.msg .b.typing{color:var(--ink-3);font-style:italic}
+.upd{margin-top:10px;padding:10px 12px;border-radius:10px;background:var(--surface-2);font-size:14px}
+.upd-t{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);font-weight:600;margin-bottom:4px}
+.upd ul{margin:0 0 8px 18px;padding:0}
+.composer{position:sticky;bottom:calc(var(--tab-h) + env(safe-area-inset-bottom,0px) + 8px);display:flex;gap:8px;background:var(--bg);padding:8px 0}
+.composer input{flex:1;border:1px solid var(--line);background:var(--surface);padding:11px 14px;border-radius:12px;min-width:0;font-size:16px}
 
 /* ---------- lock screen ---------- */
 .lock{position:fixed;inset:0;z-index:100;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px}
@@ -346,7 +361,7 @@ let syncMode = 'local';
 const LS_KEY = 'cassa-ledger-v2';
 const GH_KEY = 'cassa-github-v1';
 const DOCS = ['accounts','recurring','history','settings'];
-const APP_VERSION = 'v644c25fd';
+const APP_VERSION = 'v4881d720';
 
 const ghCfg = () => { try { return JSON.parse(localStorage.getItem(GH_KEY)||'null'); } catch(e){ return null; } };
 const setGhCfg = c => { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch(e){} };
@@ -480,8 +495,8 @@ function txHash(date,desc,amt){ return date+'|'+String(desc).trim().toLowerCase(
 function weekStart(d){ const ws = state.settings.weekStart ?? 1; const x = new Date(d); const diff = (x.getDay() - ws + 7) % 7; x.setDate(x.getDate()-diff); return x; }
 
 function occurrences(item, from, to){
-  const out = []; const anchor = item.anchor ? parseISO(item.anchor) : from;
-  const push = d => { if (d >= from && d <= to) out.push(new Date(d)); };
+  const out = []; const anchor = item.anchor ? parseISO(item.anchor) : from; const until = item.until ? parseISO(item.until) : null;
+  const push = d => { if (d >= from && d <= to && (!until || d <= until)) out.push(new Date(d)); };
   switch(item.freq){
     case 'once': push(anchor); break;
     case 'weekly': case 'biweekly': { const step = item.freq==='weekly'?7:14; let d = new Date(anchor); while (d < from) d = addDays(d, step); for (; d <= to; d = addDays(d, step)) push(d); break; }
@@ -590,9 +605,10 @@ const ICONS = {
   cashflow:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-6 4 3 5-8 4 5"/><path d="M3 21h18"/></svg>',
   costs:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/><path d="M7 15h4"/></svg>',
   networth:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>',
+  ea:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 01-11.6 7.1L4 21l1.6-4.3A8 8 0 1121 12z"/><path d="M8.5 12h.01M12 12h.01M15.5 12h.01"/></svg>',
   settings:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>'
 };
-const PAGES = [['overview','Overview'],['cashflow','Cash flow'],['costs','Costs'],['networth','Net worth'],['settings','Settings']];
+const PAGES = [['overview','Overview'],['cashflow','Cash flow'],['costs','Costs'],['networth','Net worth'],['ea','EA'],['settings','Settings']];
 let page = (location.hash||'').replace('#','') ; if (!PAGES.some(p=>p[0]===page)) page = 'overview';
 function renderNav(){
   const mk = (withIcon) => PAGES.map(([k,l]) => `<button data-page="${k}" ${k===page?'aria-current="page"':''}>${withIcon?ICONS[k]:''}<span>${l}</span></button>`).join('');
@@ -608,13 +624,14 @@ function render(){
   if (!state.loaded) return;
   renderNav();
   const asof = $('#asof-side'); if (asof) asof.textContent = today().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
-  const fn = {overview: renderOverview, cashflow: renderCashflow, costs: renderCosts, networth: renderNetworth, settings: renderSettings}[page];
+  const fn = {overview: renderOverview, cashflow: renderCashflow, costs: renderCosts, networth: renderNetworth, ea: renderEA, settings: renderSettings}[page];
   view.innerHTML = (!ghCfg() && page!=='settings' ? `<div class="banner"><div><b>Not connected.</b> Connect P&amp;L App to your data repository to see your numbers on every device.</div><div class="actions"><button class="btn small primary" data-act="connect">Connect</button></div></div>` : '') + (state.settings.sample ? `<div class="banner"><div><b>Example data.</b> These accounts, recurring items and transactions are placeholders so you can see how the ledger works — none of them are your real figures.</div><div class="actions"><button class="btn small" id="keep-sample">Keep as a starting point</button><button class="btn small primary" id="start-fresh">Start fresh</button></div></div>` : '') + fn();
   bindTips(view);
   const ks = $('#keep-sample'); if (ks) ks.onclick = () => { state.settings.sample=false; for (const m in state.tx) state.tx[m].forEach(t=>{ if(t.source==='example') t.source='manual'; }); save(...DOCS, ...Object.keys(state.tx).map(m=>'tx:'+m)); render(); toast('Edit or delete any item to make it yours'); };
   const sf = $('#start-fresh'); if (sf) sf.onclick = () => { if (confirm('Remove all example data and start with an empty ledger?')) startFresh(); };
   view.querySelectorAll('[data-act]').forEach(el => el.onclick = ev => ACTIONS[el.dataset.act]?.(el, ev));
   if (page==='settings') lockSettingsCard();
+  if (page==='ea') eaAfterRender();
 }
 
 function kpi(lbl, val, dl){ return `<div class="kpi"><div class="lbl">${lbl}</div><div class="val num">${val}</div><div class="dl">${dl||''}</div></div>`; }
@@ -662,7 +679,7 @@ function renderCashflow(){
   const inc = state.recurring.filter(r=>r.type==='income'), exp = state.recurring.filter(r=>r.type!=='income');
   const monthly = r => { const a=+r.amount||0; return {weekly:a*52/12, biweekly:a*26/12, semimonthly:a*2, monthly:a, quarterly:a/3, yearly:a/12, once:0}[r.freq] ?? a; };
   const mIn = sum(inc.filter(r=>r.active!==false).map(monthly)), mOut = sum(exp.filter(r=>r.active!==false).map(monthly));
-  const row = r => `<div class="item"><div><div class="t">${esc(r.name)} ${r.active===false?'<span class="chip">paused</span>':''}</div><div class="s">${esc(FREQS.find(f=>f[0]===r.freq)?.[1]||r.freq)}${r.freq==='once'&&r.anchor?' · '+fmtDateY(r.anchor):['monthly','quarterly','yearly'].includes(r.freq)?' · day '+(r.day||parseISO(r.anchor||iso(t)).getDate()):''} · ${esc(r.category||'')}</div></div><div class="amt num ${r.type==='income'?'pos':''}">${r.type==='income'?'+':'−'}${fmt(r.amount)}</div><div class="rowbtns"><button title="Edit" data-act="editRec" data-id="${r.id}">Edit</button><button title="Delete" data-act="delRec" data-id="${r.id}">✕</button></div></div>`;
+  const row = r => `<div class="item"><div><div class="t">${esc(r.name)} ${r.active===false?'<span class="chip">paused</span>':''}</div><div class="s">${esc(FREQS.find(f=>f[0]===r.freq)?.[1]||r.freq)}${r.freq==='once'&&r.anchor?' · '+fmtDateY(r.anchor):['monthly','quarterly','yearly'].includes(r.freq)?' · day '+(r.day||parseISO(r.anchor||iso(t)).getDate()):''}${r.until?' · until '+fmtDateY(r.until):''} · ${esc(r.category||'')}</div></div><div class="amt num ${r.type==='income'?'pos':''}">${r.type==='income'?'+':'−'}${fmt(r.amount)}</div><div class="rowbtns"><button title="Edit" data-act="editRec" data-id="${r.id}">Edit</button><button title="Delete" data-act="delRec" data-id="${r.id}">✕</button></div></div>`;
   return `
   <div class="page-head"><div><h1>Cash flow</h1><p>Weekly projection for the next ${pr.weeks.length} weeks, from ${fmt(pr.startBalance)} in cash accounts today</p></div>
     <div class="actions"><button class="btn" data-act="addRec" data-type="income">+ Income</button><button class="btn primary" data-act="addRec" data-type="expense">+ Expense</button></div></div>
@@ -769,6 +786,10 @@ function renderSettings(){
       <p class="small muted" style="margin:8px 0 0">An update file is a JSON file prepared by Claude (accounts, recurring items, transactions). Applying it merges: transactions are added without duplicates, accounts and recurring items are replaced when included.</p>
     </div>
   </div>
+  <div class="card" style="margin-top:14px"><h3>EA assistant</h3>
+    <p class="small muted" style="margin:6px 0 10px">The EA tab uses Claude through your own Anthropic API key (console.anthropic.com → API keys). The key stays on this device; each message costs a fraction of a cent.</p>
+    <div class="f2"><div class="f"><label for="s-eakey">Anthropic API key</label><input id="s-eakey" type="password" value="${esc(eaCfg().key||'')}" placeholder="sk-ant-…" autocomplete="off"></div><div class="f"><label for="s-eamodel">Model</label><input id="s-eamodel" type="text" value="${esc(eaCfg().model||'claude-sonnet-5')}"></div></div>
+  </div>
   <div class="card" id="lock-card" style="margin-top:14px"><h3>Lock on this device</h3><p class="small muted">Checking what this device supports…</p></div>
   <div class="card" style="margin-top:14px"><h3>Importing from Amex and Fidelity</h3>
     <div class="small" style="margin-top:8px;color:var(--ink-2);max-width:70ch">
@@ -814,8 +835,8 @@ function recurringForm(r, type){
     <div class="f2">${field('amount','Amount','number',r.amount,'step="0.01" min="0" required inputmode="decimal"')}${selectField('type','Direction',[['expense','Expense (out)'],['income','Income (in)']],r.type)}</div>
     <div class="f2">${selectField('freq','Frequency',FREQS,r.freq)}${selectField('category','Category',CATEGORIES.map(c=>[c,c]),r.category)}</div>
     <div class="f2"><div class="f" id="f-day"><label for="fx-day">Day of month</label><input id="fx-day" name="day" type="number" min="1" max="31" value="${esc(r.day||1)}"></div><div class="f" id="f-anchor"><label for="fx-anchor" id="anchor-lbl">Date</label><input id="fx-anchor" name="anchor" type="date" value="${esc(r.anchor||iso(today()))}"></div></div>
-    ${selectField('active','Status',[['1','Active'],['0','Paused (kept, not projected)']], r.active===false?'0':'1')}`, { onOk: form => {
-      const d = fd(form); const rec = {id:r.id||uid(), name:d.name.trim(), amount:Math.abs(+d.amount||0), type:d.type, freq:d.freq, day:+d.day||1, category:d.category, active:d.active==='1', anchor:d.anchor||iso(today())};
+    <div class="f2">${selectField('active','Status',[['1','Active'],['0','Paused (kept, not projected)']], r.active===false?'0':'1')}${field('until','Ends on (optional)','date',r.until||'')}</div>`, { onOk: form => {
+      const d = fd(form); const rec = {id:r.id||uid(), name:d.name.trim(), amount:Math.abs(+d.amount||0), type:d.type, freq:d.freq, day:+d.day||1, category:d.category, active:d.active==='1', anchor:d.anchor||iso(today()), until:d.until||undefined};
       if (isNew) state.recurring.push(rec); else Object.assign(state.recurring.find(x=>x.id===r.id), rec);
       save('recurring'); render(); toast(isNew?'Added':'Updated');
     }});
@@ -928,8 +949,109 @@ function applyUpdate(d){
   if (Array.isArray(d.history)){ const byDate = new Map(state.history.map(h=>[h.date,h])); for (const h of d.history) byDate.set(h.date,h); state.history = [...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date)); keys.push('history'); }
   if (d.tx && typeof d.tx === 'object'){ const have = new Set(allTx().map(t=>t.hash)); for (const [m, items] of Object.entries(d.tx)){ if (!Array.isArray(items)) continue; for (const t of items){ const h = t.hash || txHash(t.date,t.desc,t.amount); if (have.has(h)) continue; have.add(h); (state.tx[m] ||= []).push({id: t.id||uid(), ...t, hash:h}); added++; } if (d.replaceMonths && d.replaceMonths.includes(m)) { state.tx[m] = items.map(t=>({id:t.id||uid(), ...t, hash: t.hash || txHash(t.date,t.desc,t.amount)})); } keys.push('tx:'+m); } }
   if (Array.isArray(d.deleteTx)){ for (const h of d.deleteTx){ for (const m of Object.keys(state.tx)){ const before = state.tx[m].length; state.tx[m] = state.tx[m].filter(t=>t.hash!==h); if (state.tx[m].length!==before) keys.push('tx:'+m); } } }
-  if (d.recordSnapshot) recordSnapshot(true);
+  const norm = v => String(v||'').trim().toLowerCase();
+  const findBy = (list, ref) => list.find(x => x.id===ref || norm(x.name)===norm(ref));
+  if (Array.isArray(d.accountsUpsert)){ for (const a of d.accountsUpsert){ const ex = findBy(state.accounts, a.id||a.name); if (ex){ Object.assign(ex, {...a, balance: a.balance!=null ? Math.abs(+a.balance) : ex.balance, updated: a.updated || iso(today())}); } else state.accounts.push({id:uid(), name:a.name, kind:a.kind||'checking', balance:Math.abs(+a.balance||0), updated:a.updated||iso(today())}); } keys.push('accounts'); recordSnapshot(true); keys.push('history'); }
+  if (Array.isArray(d.accountsDelete)){ for (const r of d.accountsDelete){ const ex = findBy(state.accounts, r); if (ex) state.accounts = state.accounts.filter(x=>x!==ex); } keys.push('accounts'); }
+  if (Array.isArray(d.recurringUpsert)){ for (const r of d.recurringUpsert){ const ex = findBy(state.recurring, r.id||r.name); const clean = {...r}; delete clean.id; if (clean.amount!=null) clean.amount = Math.abs(+clean.amount); if (ex) Object.assign(ex, clean); else state.recurring.push({id:uid(), name:r.name, amount:Math.abs(+r.amount||0), type:r.type||'expense', freq:r.freq||'once', day:r.day||1, category:r.category||'Other', active:r.active!==false, anchor:r.anchor||iso(today())}); } keys.push('recurring'); }
+  if (Array.isArray(d.recurringDelete)){ for (const r of d.recurringDelete){ const ex = findBy(state.recurring, r); if (ex) state.recurring = state.recurring.filter(x=>x!==ex); } keys.push('recurring'); }
+  if (Array.isArray(d.txAdd)){ const have = new Set(allTx().map(t=>t.hash)); for (const t of d.txAdd){ if (!t.date || !t.desc || t.amount==null) continue; const h = txHash(t.date,t.desc,t.amount); if (have.has(h)) continue; have.add(h); const m = monthKey(t.date); (state.tx[m] ||= []).push({id:uid(), date:t.date, desc:t.desc, amount:+t.amount, category:t.category||categorize(t.desc), account:t.account||'', source:'ea', hash:h}); keys.push('tx:'+m); added++; } }
+  if (Array.isArray(d.txDelete)){ for (const t of d.txDelete){ const h = typeof t==='string' ? t : txHash(t.date,t.desc,t.amount); for (const m of Object.keys(state.tx)){ const before = state.tx[m].length; state.tx[m] = state.tx[m].filter(x=>x.hash!==h); if (state.tx[m].length!==before) keys.push('tx:'+m); } } }
+  if (d.recordSnapshot) { recordSnapshot(true); keys.push('history'); }
   save(...new Set(keys)); render(); toast(`Update applied${added?` — ${added} new transactions`:''}`);
+}
+
+
+/* ---------------- EA — in-app assistant (Claude API) ---------------- */
+const EA_KEY = 'pl-app-ea-v1';
+const eaCfg = () => { try { return JSON.parse(localStorage.getItem(EA_KEY)||'null') || {}; } catch(e){ return {}; } };
+const setEaCfg = c => { try { localStorage.setItem(EA_KEY, JSON.stringify(c)); } catch(e){} };
+let eaHist = (() => { try { return JSON.parse(localStorage.getItem(EA_KEY+'-hist')||'[]'); } catch(e){ return []; } })();
+const eaSaveHist = () => { try { localStorage.setItem(EA_KEY+'-hist', JSON.stringify(eaHist.slice(-60))); } catch(e){} };
+let eaBusy = false;
+
+function eaContext(){
+  const t = today(); const pr = projection(); const nw = netWorth();
+  const cats = byCategory(allTx().filter(x => x.date >= iso(addDays(t,-30)))).slice(0,8).map(([c,v])=>`${c} ${fmt(v)}`).join(', ');
+  const recent = allTx().sort((a,b)=>b.date.localeCompare(a.date)).slice(0,25).map(x=>`${x.date} ${x.desc.slice(0,40)} ${x.amount.toFixed(2)} [${x.category}]`).join('\n');
+  return `Today: ${iso(t)} (${t.toLocaleDateString('en-US',{weekday:'long'})}). Currency USD.
+ACCOUNTS (name | kind | balance | updated):
+${state.accounts.map(a=>`${a.name} | ${a.kind} | ${a.balance} | ${a.updated}`).join('\n') || '(none)'}
+Net worth ${fmt(nw.net)} (assets ${fmt(nw.assets)}, liabilities ${fmt(nw.liabilities)}). Cash on hand (checking+savings) ${fmt(cashOnHand())}.
+RECURRING ITEMS (name | type | amount | freq | day | anchor | until | category | active):
+${state.recurring.map(r=>`${r.name} | ${r.type} | ${r.amount} | ${r.freq} | ${r.day||''} | ${r.anchor||''} | ${r.until||''} | ${r.category} | ${r.active!==false}`).join('\n') || '(none)'}
+PROJECTION next ${pr.weeks.length} weeks: lowest cash ${fmt(pr.low.balance)} in week of ${pr.low.start}; ending ${fmt(pr.weeks[pr.weeks.length-1]?.balance||0)}.
+Weeks (start | in | out | end balance): ${pr.weeks.map(w=>`${w.start} | ${Math.round(w.inflow)} | ${Math.round(w.outflow)} | ${Math.round(w.balance)}`).join('; ')}
+SPENDING last 30 days by category: ${cats || '(none)'}
+RECENT TRANSACTIONS:
+${recent || '(none)'}
+Settings: week starts ${state.settings.weekStart==0?'Sunday':'Monday'}, horizon ${state.settings.horizon} weeks.`;
+}
+const EA_SYSTEM = `You are "EA", the executive assistant inside Emanuele's personal finance app (P&L App). He texts you short instructions or questions about his household finances. You answer briefly and precisely, like a sharp chief of staff, and when he asks for a change you propose it as a structured update that the app applies after he taps Apply.
+
+Rules:
+- Amounts are USD. Money out is an expense; money in is income. Never invent figures: if something is ambiguous (which account, which date, one-off or recurring), ask one short question instead of guessing.
+- Recurring frequencies: weekly, biweekly, semimonthly (1st & 15th), monthly (needs day 1-31), quarterly, yearly, once (needs anchor date YYYY-MM-DD). Anchor sets the first/next occurrence for weekly/biweekly/monthly/quarterly/yearly and the date for once.
+- Account kinds: checking, savings, investment, retirement, property, vehicle, other-asset, credit, loan, other-liability. Liability balances are positive amounts owed.
+- Categories: Housing, Utilities, Groceries, Dining, Transport, Travel, Kids & School, Pet, Health, Shopping, Subscriptions, Insurance, Taxes, Gifts & Giving, Personal, Cash, Income, Reimbursement, Investment, Transfer, Other.
+- Match existing items by their exact name from the context. To change an amount or date, upsert with the same name and only the fields that change. Items can have an 'until' date (last occurrence). For a change that starts in the future (e.g. rent rises from January), do NOT move the existing item's anchor: give the existing item until = the day before, and add a new item (new name, e.g. 'Rent (from Jan 2027)') with anchor = the start date. To record a paid bill use txAdd (amount negative). To update a balance use accountsUpsert with balance.
+- Keep 'reply' to 1-3 sentences; summarize what the update will do. If no change is needed (a question), set update to null.`;
+const EA_TOOL = { name:'ea_reply', description:'Reply to the user and optionally propose a data update the app will apply after confirmation.', input_schema:{ type:'object', properties:{
+  reply:{type:'string'},
+  update:{ anyOf:[{type:'null'},{ type:'object', properties:{
+    accountsUpsert:{type:'array', items:{type:'object', properties:{name:{type:'string'},kind:{type:'string'},balance:{type:'number'},updated:{type:'string'}}, required:['name']}},
+    accountsDelete:{type:'array', items:{type:'string'}},
+    recurringUpsert:{type:'array', items:{type:'object', properties:{name:{type:'string'},amount:{type:'number'},type:{type:'string',enum:['income','expense']},freq:{type:'string',enum:['weekly','biweekly','semimonthly','monthly','quarterly','yearly','once']},day:{type:'integer'},anchor:{type:'string'},until:{type:'string'},category:{type:'string'},active:{type:'boolean'}}, required:['name']}},
+    recurringDelete:{type:'array', items:{type:'string'}},
+    txAdd:{type:'array', items:{type:'object', properties:{date:{type:'string'},desc:{type:'string'},amount:{type:'number'},category:{type:'string'},account:{type:'string'}}, required:['date','desc','amount']}},
+    txDelete:{type:'array', items:{type:'object', properties:{date:{type:'string'},desc:{type:'string'},amount:{type:'number'}}, required:['date','desc','amount']}},
+    settings:{type:'object', properties:{horizon:{type:'integer'},weekStart:{type:'integer'}}},
+    recordSnapshot:{type:'boolean'}
+  }}] }
+}, required:['reply','update'] } };
+
+function describeUpdate(u){
+  if (!u) return ''; const L = [];
+  (u.accountsUpsert||[]).forEach(a => L.push(`Account “${a.name}”${a.balance!=null?` → balance ${fmt(a.balance)}`:''}${a.kind?` (${a.kind})`:''}`));
+  (u.accountsDelete||[]).forEach(a => L.push(`Remove account “${a}”`));
+  (u.recurringUpsert||[]).forEach(r => L.push(`${state.recurring.some(x=>x.name.toLowerCase()===String(r.name).toLowerCase())?'Change':'Add'} “${r.name}”${r.amount!=null?` ${fmt(r.amount)}`:''}${r.freq?` ${r.freq}`:''}${r.day?` day ${r.day}`:''}${r.anchor?` from ${r.anchor}`:''}${r.until?` until ${r.until}`:''}${r.active===false?' (paused)':''}`));
+  (u.recurringDelete||[]).forEach(r => L.push(`Remove “${r}”`));
+  (u.txAdd||[]).forEach(t => L.push(`Record ${fmtS(t.amount)} “${t.desc}” on ${t.date}`));
+  (u.txDelete||[]).forEach(t => L.push(`Delete ${fmtS(t.amount)} “${t.desc}” on ${t.date}`));
+  if (u.settings) L.push(`Settings: ${Object.entries(u.settings).map(([k,v])=>k+'='+v).join(', ')}`);
+  if (u.recordSnapshot) L.push('Record a net-worth snapshot');
+  return L;
+}
+async function eaSend(text){
+  const cfg = eaCfg(); if (!cfg.key){ toast('Add your API key in Settings → EA assistant'); return; }
+  eaHist.push({role:'user', content:text}); eaSaveHist(); eaBusy = true; render();
+  try {
+    const msgs = eaHist.slice(-20).map(m => ({role:m.role, content: m.role==='assistant' ? (m.content + (m.update ? '\n[proposed update: '+JSON.stringify(m.update)+']' : '')) : m.content}));
+    const r = await fetch('https://api.anthropic.com/v1/messages', { method:'POST', headers:{ 'content-type':'application/json', 'x-api-key': cfg.key, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
+      body: JSON.stringify({ model: cfg.model || 'claude-sonnet-5', max_tokens: 1200, system: EA_SYSTEM + '\n\nCURRENT DATA:\n' + eaContext(), messages: msgs, tools:[EA_TOOL], tool_choice:{type:'tool', name:'ea_reply'} }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error?.message || ('HTTP '+r.status));
+    const tu = (j.content||[]).find(c => c.type==='tool_use'); const out = tu ? tu.input : {reply:(j.content||[]).map(c=>c.text||'').join(''), update:null};
+    const upd = out.update && Object.keys(out.update).length ? out.update : null;
+    eaHist.push({role:'assistant', content: out.reply || '(no reply)', update: upd, applied:false, ts: Date.now()});
+  } catch(e){ eaHist.push({role:'assistant', content: 'I could not reach the assistant: ' + (e.message||e) + (/api key|authentication|401/i.test(String(e.message))?' — check the API key in Settings.':''), error:true}); }
+  eaBusy = false; eaSaveHist(); render();
+}
+function renderEA(){
+  const cfg = eaCfg();
+  const bubble = (m,i) => { if (m.role==='user') return `<div class="msg me"><div class="b">${esc(m.content)}</div></div>`;
+    const ops = describeUpdate(m.update);
+    return `<div class="msg ea"><div class="b ${m.error?'err':''}">${esc(m.content)}${ops.length?`<div class="upd"><div class="upd-t">${m.applied?'Applied':'Proposed change'}</div><ul>${ops.map(o=>`<li>${esc(o)}</li>`).join('')}</ul>${m.applied?'':`<div class="actions"><button class="btn small primary" data-act="eaApply" data-i="${i}">Apply</button><button class="btn small ghost" data-act="eaDiscard" data-i="${i}">Discard</button></div>`}</div>`:''}</div></div>`; };
+  return `
+  <div class="page-head"><div><h1>EA</h1><p>${cfg.key ? 'Text small changes or questions — “rent is $7,200 from January”, “add $650 vet on Sep 12”, “what’s my lowest week?”' : 'Your executive assistant for quick changes. Add an Anthropic API key in Settings to switch it on.'}</p></div>
+    <div class="actions">${eaHist.length?'<button class="btn small ghost" data-act="eaClear">Clear chat</button>':''}</div></div>
+  <div class="chat" id="chat">${eaHist.map(bubble).join('') || '<div class="empty">No messages yet. Try: “Move the Amex payment to the 5th” or “Groceries are closer to $500 a week”.</div>'}${eaBusy?'<div class="msg ea"><div class="b typing">Thinking…</div></div>':''}</div>
+  <form class="composer" id="composer"><input id="ea-in" type="text" placeholder="${cfg.key?'Message EA…':'Add an API key in Settings first'}" autocomplete="off" ${cfg.key&&!eaBusy?'':'disabled'}><button class="btn primary" type="submit" ${cfg.key&&!eaBusy?'':'disabled'}>Send</button></form>`;
+}
+function eaAfterRender(){
+  const f = $('#composer'); if (f) f.onsubmit = e => { e.preventDefault(); const v = $('#ea-in').value.trim(); if (!v) return; $('#ea-in').value=''; eaSend(v); };
+  const c = $('#chat'); if (c) c.scrollTop = c.scrollHeight;
+  const inp = $('#ea-in'); if (inp && !eaBusy && window.innerWidth >= 640) inp.focus();
 }
 
 /* ---------------- actions ---------------- */
@@ -944,6 +1066,9 @@ const ACTIONS = {
   weekDetail: el => { const w = projection().weeks[+el.dataset.i]; modal(`Week of ${fmtDateY(w.start)}`, `<div class="list">${w.rows.map(r=>`<div class="item"><div><div class="t">${esc(r.name)}</div><div class="s">${fmtDateY(r.date)} · ${esc(r.category||'')}</div></div><div class="amt num ${r.amount>0?'pos':''}">${fmtS(r.amount)}</div></div>`).join('')||'<div class="empty">Nothing planned this week</div>'}</div><div class="small muted">In ${fmt(w.inflow)} · Out ${fmt(w.outflow)} · Net ${fmtS(w.net)} · Ending balance <b>${fmtS(w.balance)}</b>${w.i===0?` · Already booked this week: ${fmt(w.actIn)} in, ${fmt(w.actOut)} out`:''}</div>`, {}); },
   exportJson: () => deliver(`pl-app-backup-${iso(today())}.json`, JSON.stringify({exported: new Date().toISOString(), accounts:state.accounts, recurring:state.recurring, history:state.history, settings:state.settings, tx:state.tx}, null, 2), 'application/json'),
   exportCsv: () => deliver(`transactions-${iso(today())}.csv`, toCSV([['Date','Description','Amount','Category','Account','Source'], ...allTx().sort((a,b)=>a.date.localeCompare(b.date)).map(t=>[t.date,t.desc,t.amount.toFixed(2),t.category,t.account||'',t.source||''])]), 'text/csv'),
+  eaApply: el => { const m = eaHist[+el.dataset.i]; if (!m || !m.update) return; try { applyUpdate(m.update); m.applied = true; eaSaveHist(); } catch(e){ toast('Could not apply that change'); } render(); },
+  eaDiscard: el => { const m = eaHist[+el.dataset.i]; if (m){ m.update = null; eaSaveHist(); render(); } },
+  eaClear: () => { eaHist = []; eaSaveHist(); render(); },
   applyUpdate: () => { const inp = document.createElement('input'); inp.type='file'; inp.accept='.json,application/json'; inp.onchange = () => { const f = inp.files[0]; if (!f) return; f.text().then(t => { try { applyUpdate(JSON.parse(t)); } catch(e){ toast('That file is not a valid update'); } }); }; inp.click(); },
   importJson: () => { modal('Restore backup', `<div class="f"><label for="fx-json">Paste the backup JSON (or open the file and copy its contents)</label><textarea id="fx-json" name="json" required></textarea></div><div class="f"><span class="help">This replaces everything currently in the ledger.</span></div>`, {okLabel:'Restore', danger:true, onOk: form => { try { const d = JSON.parse(form.json.value); if (!d || !Array.isArray(d.accounts)) throw 0; state.accounts=d.accounts; state.recurring=d.recurring||[]; state.history=d.history||[]; state.settings={...state.settings,...(d.settings||{}), sample:false}; state.tx=d.tx||{}; save(...DOCS, ...Object.keys(state.tx).map(m=>'tx:'+m)); render(); toast('Backup restored'); } catch(e){ toast('That does not look like a ledger backup'); return false; } }}); },
   wipe: () => { if (confirm('Erase all accounts, items, transactions and history? This cannot be undone.')) startFresh(); },
@@ -1016,6 +1141,7 @@ view.addEventListener('change', e => {
   const id = e.target.id;
   if (id==='s-ws'){ state.settings.weekStart = +e.target.value; save('settings'); render(); }
   if (id==='s-hz'){ state.settings.horizon = +e.target.value; save('settings'); render(); }
+  if (id==='s-eakey' || id==='s-eamodel'){ const c = eaCfg(); c.key = $('#s-eakey').value.trim(); c.model = $('#s-eamodel').value.trim() || 'claude-sonnet-5'; setEaCfg(c); toast('EA settings saved'); }
   if (id==='f-month'){ costFilter.month = e.target.value; render(); }
   if (id==='f-cat'){ costFilter.cat = e.target.value; render(); }
 });
