@@ -361,7 +361,7 @@ let syncMode = 'local';
 const LS_KEY = 'cassa-ledger-v2';
 const GH_KEY = 'cassa-github-v1';
 const DOCS = ['accounts','recurring','history','settings'];
-const APP_VERSION = 'v5e9b437a';
+const APP_VERSION = 'v167723ba';
 
 const ghCfg = () => { try { return JSON.parse(localStorage.getItem(GH_KEY)||'null'); } catch(e){ return null; } };
 const setGhCfg = c => { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch(e){} };
@@ -542,15 +542,20 @@ function recordSnapshot(silent){
   save('history'); if (!silent) toast('Net worth snapshot recorded');
 }
 
+function nearestPoint(targetIso, maxDays=10){
+  const H = state.history; if (!H.length) return null; const tgt = parseISO(targetIso).getTime();
+  let best = null, bestGap = Infinity;
+  for (const h of H){ const gap = Math.abs(parseISO(h.date).getTime() - tgt); if (gap < bestGap || (gap === bestGap && h.date < targetIso)){ best = h; bestGap = gap; } }
+  return best && bestGap / 86400000 <= maxDays ? best : null;
+}
+const prevMonthPoint = () => nearestPoint(iso(addMonths(today(), -1)));
 function monthlyAnchors(maxMonths=13){
   const t = today(); const H = state.history; if (!H.length) return [];
   const out = [];
   for (let k=0; k<maxMonths; k++){
     const target = iso(addMonths(t, -k));
-    let pt = null; for (let i=H.length-1; i>=0; i--){ if (H[i].date <= target){ pt = H[i]; break; } }
+    const pt = k===0 ? (nearestPoint(target) || H[H.length-1]) : nearestPoint(target);
     if (!pt) break;
-    if ((parseISO(target) - parseISO(pt.date)) / 86400000 > 10) break;   // gap too wide to call it "that month"
-    if (k===0 && !pt) continue;
     out.push({ target, date: pt.date, netWorth: pt.netWorth });
   }
   out.reverse();
@@ -674,7 +679,7 @@ function deltaChip(cur, prev, inverse){ if (prev==null) return ''; const d=cur-p
 function renderOverview(){
   const nw = netWorth(); const pr = projection(); const t = today(); const mk = iso(t).slice(0,7); const mt = monthTotals(mk);
   const prevMonthKey = iso(addMonths(new Date(t.getFullYear(), t.getMonth(), 1), -1)).slice(0,7); const pm = monthTotals(prevMonthKey);
-  const prevH = state.history.length>1 ? state.history[state.history.length-2] : null;
+  const prevH = prevMonthPoint();
   const w0 = pr.weeks[0]; const dayOfMonth = t.getDate(); const daysInMonth = new Date(t.getFullYear(),t.getMonth()+1,0).getDate();
   const weeklyOut = pr.weeks.length ? sum(pr.weeks.map(w=>w.outflow))/pr.weeks.length : 0;
   const balPts = [{date: iso(t), v: pr.startBalance, label:'Today'}].concat(pr.weeks.map(w=>({date:w.end, v:w.balance, sub:`In ${fmt(w.inflow)} · Out ${fmt(w.outflow)}`})));
@@ -682,7 +687,7 @@ function renderOverview(){
   <div class="page-head"><div><h1>Overview</h1><p>${t.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})}</p></div>
     <div class="actions"><button class="btn" data-act="addTx">+ Cost</button><button class="btn" data-act="importCsv">Import CSV</button><button class="btn primary" data-act="snapshot">Record net worth</button></div></div>
   <div class="kpis">
-    ${kpi('Net worth', fmt(nw.net), prevH ? deltaChip(nw.net, prevH.netWorth) + '<span>since '+fmtDate(prevH.date)+'</span>' : '')}
+    ${kpi('Net worth', fmt(nw.net), prevH ? deltaChip(nw.net, prevH.netWorth) + '<span>vs '+fmtDate(prevH.date)+'</span>' : '')}
     ${kpi('Cash on hand', fmt(pr.startBalance), `<span>${state.accounts.filter(a=>kindInfo(a.kind)[3]).length} cash accounts</span>`)}
     ${kpi('This week', `<span class="${(w0?w0.net:0)>=0?'pos':'neg'}">${fmtS(w0?w0.net:0)}</span>`, `<span>${fmt(w0?w0.inflow:0)} in · ${fmt(w0?w0.outflow:0)} out</span>`)}
     ${kpi(pr.weeks.length+'-week low', `<span class="${pr.low.balance<0?'neg':''}">${fmtS(pr.low.balance)}</span>`, `<span>${pr.low.start ? 'week of '+fmtDate(pr.low.start) : '—'}</span>`)}
@@ -783,13 +788,13 @@ function renderCosts(){
 function renderNetworth(){
   const nw = netWorth(); const groups = {}; for (const a of state.accounts) (groups[a.kind] ||= []).push(a);
   const pts = state.history.map(h=>({date:h.date, v:h.netWorth, sub: h.assets!=null ? `Assets ${fmt(h.assets)} · Liabilities ${fmt(h.liabilities)}` : ''}));
-  const first = state.history[0], prev = state.history.length>1 ? state.history[state.history.length-2] : null;
+  const first = state.history[0], prev = prevMonthPoint();
   const section = (title, kinds, sign) => { const list = kinds.flatMap(k=>groups[k]||[]); if (!list.length) return ''; return `<div class="card"><div class="card-head"><h3>${title}</h3><b class="num">${fmt(sum(list.map(a=>+a.balance||0)))}</b></div><div class="list">${list.map(a=>`<div class="item"><div><div class="t">${esc(a.name)}</div><div class="s">${esc(kindInfo(a.kind)[1])} · updated ${a.updated?fmtDateY(a.updated):'—'}</div></div><div class="amt num ${sign<0?'neg':''}">${sign<0?'−':''}${fmt(a.balance)}</div><div class="rowbtns"><button data-act="editAcct" data-id="${a.id}">Edit</button><button data-act="delAcct" data-id="${a.id}">✕</button></div></div>`).join('')}</div></div>`; };
   return `
   <div class="page-head"><div><h1>Net worth</h1><p>Assets minus liabilities. Update balances as you go; record a snapshot to build the trend line.</p></div>
     <div class="actions"><button class="btn" data-act="addAcct">+ Account</button><button class="btn primary" data-act="snapshot">Record snapshot</button></div></div>
   <div class="kpis">
-    ${kpi('Net worth', fmt(nw.net), prev ? deltaChip(nw.net, prev.netWorth)+'<span class="hide-sm">since '+fmtDate(prev.date)+'</span>' : '')}
+    ${kpi('Net worth', fmt(nw.net), prev ? deltaChip(nw.net, prev.netWorth)+'<span>vs '+fmtDate(prev.date)+'</span>' : '')}
     ${kpi('Assets', fmt(nw.assets), `<span>${state.accounts.filter(a=>kindInfo(a.kind)[2]==='asset').length} accounts</span>`)}
     ${kpi('Liabilities', `<span class="neg">${nw.liabilities?'−':''}${fmt(nw.liabilities)}</span>`, `<span>${state.accounts.filter(a=>kindInfo(a.kind)[2]==='liability').length} accounts</span>`)}
     ${kpi('Since '+(first?fmtDateY(first.date):'start'), first ? deltaChip(nw.net, first.netWorth) : '<span class="muted">—</span>', first?`<span>${fmt(first.netWorth)} then</span>`:'')}
