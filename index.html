@@ -346,7 +346,7 @@ let syncMode = 'local';
 const LS_KEY = 'cassa-ledger-v2';
 const GH_KEY = 'cassa-github-v1';
 const DOCS = ['accounts','recurring','history','settings'];
-const APP_VERSION = 'v81d28606';
+const APP_VERSION = 'v644c25fd';
 
 const ghCfg = () => { try { return JSON.parse(localStorage.getItem(GH_KEY)||'null'); } catch(e){ return null; } };
 const setGhCfg = c => { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch(e){} };
@@ -765,8 +765,8 @@ function renderSettings(){
     </div>
     <div class="card"><h3>Your data</h3>
       <p class="small muted" style="margin:8px 0 12px">${state.accounts.length} accounts · ${state.recurring.length} recurring items · ${count} transactions · ${state.history.length} snapshots</p>
-      <div class="actions"><button class="btn" data-act="exportJson">Export backup (JSON)</button><button class="btn" data-act="exportCsv">Export transactions (CSV)</button><button class="btn" data-act="importJson">Restore backup</button><button class="btn danger" data-act="wipe">Erase everything</button></div>
-      <p class="small muted" style="margin:12px 0 0">P&amp;L App ${APP_VERSION}</p>
+      <div class="actions"><button class="btn primary" data-act="applyUpdate">Apply update file</button><button class="btn" data-act="exportJson">Export backup (JSON)</button><button class="btn" data-act="exportCsv">Export transactions (CSV)</button><button class="btn" data-act="importJson">Restore backup</button><button class="btn danger" data-act="wipe">Erase everything</button></div>
+      <p class="small muted" style="margin:8px 0 0">An update file is a JSON file prepared by Claude (accounts, recurring items, transactions). Applying it merges: transactions are added without duplicates, accounts and recurring items are replaced when included.</p>
     </div>
   </div>
   <div class="card" id="lock-card" style="margin-top:14px"><h3>Lock on this device</h3><p class="small muted">Checking what this device supports…</p></div>
@@ -918,6 +918,20 @@ async function deliver(filename, data, mime){
 }
 function toCSV(rows){ const q = v => { v = String(v ?? ''); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }; return rows.map(r=>r.map(q).join(',')).join('\n'); }
 
+/* ---------------- update files from Claude ---------------- */
+function applyUpdate(d){
+  if (!d || typeof d !== 'object') throw 0;
+  const keys = []; let added = 0;
+  if (Array.isArray(d.accounts)){ state.accounts = d.accounts; keys.push('accounts'); }
+  if (Array.isArray(d.recurring)){ state.recurring = d.recurring; keys.push('recurring'); }
+  if (d.settings && typeof d.settings === 'object'){ state.settings = {...state.settings, ...d.settings, sample:false}; keys.push('settings'); }
+  if (Array.isArray(d.history)){ const byDate = new Map(state.history.map(h=>[h.date,h])); for (const h of d.history) byDate.set(h.date,h); state.history = [...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date)); keys.push('history'); }
+  if (d.tx && typeof d.tx === 'object'){ const have = new Set(allTx().map(t=>t.hash)); for (const [m, items] of Object.entries(d.tx)){ if (!Array.isArray(items)) continue; for (const t of items){ const h = t.hash || txHash(t.date,t.desc,t.amount); if (have.has(h)) continue; have.add(h); (state.tx[m] ||= []).push({id: t.id||uid(), ...t, hash:h}); added++; } if (d.replaceMonths && d.replaceMonths.includes(m)) { state.tx[m] = items.map(t=>({id:t.id||uid(), ...t, hash: t.hash || txHash(t.date,t.desc,t.amount)})); } keys.push('tx:'+m); } }
+  if (Array.isArray(d.deleteTx)){ for (const h of d.deleteTx){ for (const m of Object.keys(state.tx)){ const before = state.tx[m].length; state.tx[m] = state.tx[m].filter(t=>t.hash!==h); if (state.tx[m].length!==before) keys.push('tx:'+m); } } }
+  if (d.recordSnapshot) recordSnapshot(true);
+  save(...new Set(keys)); render(); toast(`Update applied${added?` — ${added} new transactions`:''}`);
+}
+
 /* ---------------- actions ---------------- */
 const ACTIONS = {
   addTx: () => txForm(), importCsv: () => importForm(), snapshot: () => { recordSnapshot(); render(); },
@@ -930,6 +944,7 @@ const ACTIONS = {
   weekDetail: el => { const w = projection().weeks[+el.dataset.i]; modal(`Week of ${fmtDateY(w.start)}`, `<div class="list">${w.rows.map(r=>`<div class="item"><div><div class="t">${esc(r.name)}</div><div class="s">${fmtDateY(r.date)} · ${esc(r.category||'')}</div></div><div class="amt num ${r.amount>0?'pos':''}">${fmtS(r.amount)}</div></div>`).join('')||'<div class="empty">Nothing planned this week</div>'}</div><div class="small muted">In ${fmt(w.inflow)} · Out ${fmt(w.outflow)} · Net ${fmtS(w.net)} · Ending balance <b>${fmtS(w.balance)}</b>${w.i===0?` · Already booked this week: ${fmt(w.actIn)} in, ${fmt(w.actOut)} out`:''}</div>`, {}); },
   exportJson: () => deliver(`pl-app-backup-${iso(today())}.json`, JSON.stringify({exported: new Date().toISOString(), accounts:state.accounts, recurring:state.recurring, history:state.history, settings:state.settings, tx:state.tx}, null, 2), 'application/json'),
   exportCsv: () => deliver(`transactions-${iso(today())}.csv`, toCSV([['Date','Description','Amount','Category','Account','Source'], ...allTx().sort((a,b)=>a.date.localeCompare(b.date)).map(t=>[t.date,t.desc,t.amount.toFixed(2),t.category,t.account||'',t.source||''])]), 'text/csv'),
+  applyUpdate: () => { const inp = document.createElement('input'); inp.type='file'; inp.accept='.json,application/json'; inp.onchange = () => { const f = inp.files[0]; if (!f) return; f.text().then(t => { try { applyUpdate(JSON.parse(t)); } catch(e){ toast('That file is not a valid update'); } }); }; inp.click(); },
   importJson: () => { modal('Restore backup', `<div class="f"><label for="fx-json">Paste the backup JSON (or open the file and copy its contents)</label><textarea id="fx-json" name="json" required></textarea></div><div class="f"><span class="help">This replaces everything currently in the ledger.</span></div>`, {okLabel:'Restore', danger:true, onOk: form => { try { const d = JSON.parse(form.json.value); if (!d || !Array.isArray(d.accounts)) throw 0; state.accounts=d.accounts; state.recurring=d.recurring||[]; state.history=d.history||[]; state.settings={...state.settings,...(d.settings||{}), sample:false}; state.tx=d.tx||{}; save(...DOCS, ...Object.keys(state.tx).map(m=>'tx:'+m)); render(); toast('Backup restored'); } catch(e){ toast('That does not look like a ledger backup'); return false; } }}); },
   wipe: () => { if (confirm('Erase all accounts, items, transactions and history? This cannot be undone.')) startFresh(); },
   syncNow: async () => { const ok = await syncFromGitHub(true); toast(ok ? 'Up to date' : (ghCfg() ? 'Could not reach GitHub' : 'Connect first')); render(); },
