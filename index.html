@@ -353,21 +353,21 @@ const FREQS = [['weekly','Weekly'],['biweekly','Every 2 weeks'],['semimonthly','
 
 /* ---------------- state & storage (GitHub data repo) ---------------- */
 const state = {
-  accounts: [], recurring: [], history: [], tx: {},   // tx: {'YYYY-MM': [..]}
+  accounts: [], recurring: [], history: [], tx: {}, ea: [],   // tx: {'YYYY-MM': [..]}; ea: chat with the assistant
   settings: { weekStart: 1, horizon: 13, sample: false, created: null },
   loaded: false
 };
 let syncMode = 'local';
 const LS_KEY = 'cassa-ledger-v2';
 const GH_KEY = 'cassa-github-v1';
-const DOCS = ['accounts','recurring','history','settings'];
-const APP_VERSION = 'v167723ba';
+const DOCS = ['accounts','recurring','history','settings','ea'];
+const APP_VERSION = 'vbc059735';
 
 const ghCfg = () => { try { return JSON.parse(localStorage.getItem(GH_KEY)||'null'); } catch(e){ return null; } };
 const setGhCfg = c => { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch(e){} };
 const shas = {};   // path -> sha of the version we last read/wrote
 function lsGet(){ try { return JSON.parse(localStorage.getItem(LS_KEY)||'null'); } catch(e){ return null; } }
-function lsSet(){ try { localStorage.setItem(LS_KEY, JSON.stringify({accounts:state.accounts,recurring:state.recurring,history:state.history,settings:state.settings,tx:state.tx,shas})); } catch(e){} }
+function lsSet(){ try { localStorage.setItem(LS_KEY, JSON.stringify({accounts:state.accounts,recurring:state.recurring,history:state.history,settings:state.settings,tx:state.tx,ea:state.ea,shas})); } catch(e){} }
 
 const utf8b64 = str => { const bytes = new TextEncoder().encode(str); let bin=''; for (let i=0;i<bytes.length;i+=0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i,i+0x8000)); return btoa(bin); };
 async function gh(path, opts={}){
@@ -419,6 +419,7 @@ async function pullDoc(path, merge){
     const m = path.match(/^tx\/(\d{4}-\d{2})\.json$/);
     if (m){ const mine = state.tx[m[1]]||[]; const seen = new Set(mine.map(t=>t.hash)); for (const t of (data.items||[])) if (!seen.has(t.hash)) mine.push(t); state.tx[m[1]] = mine; }
     else if (/history/.test(path)){ const byDate = new Map((data.items||[]).map(h=>[h.date,h])); for (const h of state.history) byDate.set(h.date,h); state.history = [...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date)); }
+    else if (/\/ea\.json$/.test(path)){ const byId = new Map((data.items||[]).map(m=>[m.id,m])); for (const m of state.ea) byId.set(m.id,m); state.ea = [...byId.values()].sort((a,b)=>(a.ts||0)-(b.ts||0)).slice(-80); }
     // accounts/recurring/settings: keep local (the user just edited them)
   } else applyDoc(path, data);
   if (merge){ const meta = await gh(`${repoPath()}/contents/${path}?ref=${ghCfg().branch||'main'}`); if (meta.ok){ const j = await meta.json(); shas[path] = j.sha; } }
@@ -454,7 +455,7 @@ async function syncFromGitHub(force){
 
 async function loadAll(){
   const local = lsGet();
-  if (local){ Object.assign(state, {accounts:local.accounts||[], recurring:local.recurring||[], history:local.history||[], tx:local.tx||{}, settings:{...state.settings, ...(local.settings||{})}}); Object.assign(shas, local.shas||{}); }
+  if (local){ Object.assign(state, {accounts:local.accounts||[], recurring:local.recurring||[], history:local.history||[], tx:local.tx||{}, ea:local.ea||[], settings:{...state.settings, ...(local.settings||{})}}); Object.assign(shas, local.shas||{}); }
   state.loaded = true;
   if (!ghCfg()){ setSync('local', 'Not connected'); return; }
   await syncFromGitHub(true);
@@ -1013,8 +1014,7 @@ function applyUpdate(d){
 const EA_KEY = 'pl-app-ea-v1';
 const eaCfg = () => { let local = {}; try { local = JSON.parse(localStorage.getItem(EA_KEY)||'null') || {}; } catch(e){} return { key: state.settings.eaKey || local.key || '', model: state.settings.eaModel || local.model || 'claude-sonnet-5' }; };
 const setEaCfg = c => { state.settings.eaKey = c.key || ''; state.settings.eaModel = c.model || 'claude-sonnet-5'; try { localStorage.setItem(EA_KEY, JSON.stringify(c)); } catch(e){} save('settings'); };
-let eaHist = (() => { try { return JSON.parse(localStorage.getItem(EA_KEY+'-hist')||'[]'); } catch(e){ return []; } })();
-const eaSaveHist = () => { try { localStorage.setItem(EA_KEY+'-hist', JSON.stringify(eaHist.slice(-60))); } catch(e){} };
+const eaSaveHist = () => { if (state.ea.length > 80) state.ea = state.ea.slice(-80); save('ea'); };
 let eaBusy = false;
 
 function monthlyTable(){
@@ -1096,9 +1096,9 @@ function describeUpdate(u){
 }
 async function eaSend(text){
   const cfg = eaCfg(); if (!cfg.key){ toast('Add your API key in Settings → EA assistant'); return; }
-  eaHist.push({role:'user', content:text}); eaSaveHist(); eaBusy = true; render();
+  state.ea.push({id:uid(), ts:Date.now(), role:'user', content:text}); eaSaveHist(); eaBusy = true; render();
   try {
-    const msgs = eaHist.slice(-20).map(m => ({role:m.role, content: m.role==='assistant' ? (m.content + (m.update ? '\n[proposed update: '+JSON.stringify(m.update)+']' : '')) : m.content}));
+    const msgs = state.ea.slice(-20).map(m => ({role:m.role, content: m.role==='assistant' ? (m.content + (m.update ? '\n[proposed update: '+JSON.stringify(m.update)+']' : '')) : m.content}));
     const system = EA_SYSTEM + '\n\nCURRENT DATA:\n' + eaContext();
     let out = null;
     for (let round = 0; round < 6 && !out; round++){
@@ -1114,8 +1114,8 @@ async function eaSend(text){
       msgs.push({role:'user', content: uses.map(u => ({ type:'tool_result', tool_use_id: u.id, content: JSON.stringify(eaRunTool(u.name, u.input||{})) })) });
     }
     const upd = out.update && Object.keys(out.update).length ? out.update : null;
-    eaHist.push({role:'assistant', content: out.reply || '(no reply)', update: upd, applied:false, ts: Date.now()});
-  } catch(e){ eaHist.push({role:'assistant', content: 'I could not reach the assistant: ' + (e.message||e) + (/api key|authentication|401/i.test(String(e.message))?' — check the API key in Settings.':''), error:true}); }
+    state.ea.push({id:uid(), ts:Date.now(), role:'assistant', content: out.reply || '(no reply)', update: upd, applied:false});
+  } catch(e){ state.ea.push({id:uid(), ts:Date.now(), role:'assistant', content: 'I could not reach the assistant: ' + (e.message||e) + (/api key|authentication|401/i.test(String(e.message))?' — check the API key in Settings.':''), error:true}); }
   eaBusy = false; eaSaveHist(); render();
 }
 function renderEA(){
@@ -1125,9 +1125,9 @@ function renderEA(){
     return `<div class="msg ea"><div class="b ${m.error?'err':''}">${esc(m.content)}${ops.length?`<div class="upd"><div class="upd-t">${m.applied?'Applied':'Proposed change'}</div><ul>${ops.map(o=>`<li>${esc(o)}</li>`).join('')}</ul>${m.applied?'':`<div class="actions"><button class="btn small primary" data-act="eaApply" data-i="${i}">Apply</button><button class="btn small ghost" data-act="eaDiscard" data-i="${i}">Discard</button></div>`}</div>`:''}</div></div>`; };
   return `
   <div class="page-head"><div><h1>EA</h1><p>${cfg.key ? 'Text small changes or questions — “rent is $7,200 from January”, “add $650 vet on Sep 12”, “what’s my lowest week?”' : 'Your executive assistant for quick changes and questions about your numbers.'}</p></div>
-    <div class="actions">${eaHist.length?'<button class="btn small ghost" data-act="eaClear">Clear chat</button>':''}</div></div>
+    <div class="actions">${state.ea.length?'<button class="btn small ghost" data-act="eaClear">Clear chat</button>':''}</div></div>
   ${cfg.key ? '' : `<div class="card" style="margin-bottom:14px"><h3>Switch EA on</h3><p class="small muted" style="margin:6px 0 10px">Paste your Anthropic API key (console.anthropic.com → API keys). It is saved with your data, so you only do this once for all devices.</p><form id="ea-keyform" class="f2" style="align-items:end"><div class="f"><label for="ea-key">API key</label><input id="ea-key" type="password" placeholder="sk-ant-…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" style="font-size:16px"></div><button class="btn primary" type="submit">Save key</button></form></div>`}
-  <div class="chat" id="chat">${eaHist.map(bubble).join('') || '<div class="empty">No messages yet. Try: “Move the Amex payment to the 5th” or “Groceries are closer to $500 a week”.</div>'}${eaBusy?'<div class="msg ea"><div class="b typing">Thinking…</div></div>':''}</div>
+  <div class="chat" id="chat">${state.ea.map(bubble).join('') || '<div class="empty">No messages yet. Try: “Move the Amex payment to the 5th” or “Groceries are closer to $500 a week”.</div>'}${eaBusy?'<div class="msg ea"><div class="b typing">Thinking…</div></div>':''}</div>
   <form class="composer" id="composer"><input id="ea-in" type="text" placeholder="${cfg.key?'Message EA…':'Save your API key above, then type here'}" autocomplete="off" autocapitalize="sentences" ${eaBusy?'disabled':''}><button class="btn primary" type="submit" ${eaBusy?'disabled':''}>Send</button></form>`;
 }
 function eaAfterRender(){
@@ -1149,9 +1149,9 @@ const ACTIONS = {
   weekDetail: el => { const w = projection().weeks[+el.dataset.i]; modal(`Week of ${fmtDateY(w.start)}`, `<div class="list">${w.rows.map(r=>`<div class="item"><div><div class="t">${esc(r.name)}</div><div class="s">${fmtDateY(r.date)} · ${esc(r.category||'')}</div></div><div class="amt num ${r.amount>0?'pos':''}">${fmtS(r.amount)}</div></div>`).join('')||'<div class="empty">Nothing planned this week</div>'}</div><div class="small muted">In ${fmt(w.inflow)} · Out ${fmt(w.outflow)} · Net ${fmtS(w.net)} · Ending balance <b>${fmtS(w.balance)}</b>${w.i===0?` · Already booked this week: ${fmt(w.actIn)} in, ${fmt(w.actOut)} out`:''}</div>`, {}); },
   exportJson: () => deliver(`pl-app-backup-${iso(today())}.json`, JSON.stringify({exported: new Date().toISOString(), accounts:state.accounts, recurring:state.recurring, history:state.history, settings:state.settings, tx:state.tx}, null, 2), 'application/json'),
   exportCsv: () => deliver(`transactions-${iso(today())}.csv`, toCSV([['Date','Description','Amount','Category','Account','Source'], ...allTx().sort((a,b)=>a.date.localeCompare(b.date)).map(t=>[t.date,t.desc,t.amount.toFixed(2),t.category,t.account||'',t.source||''])]), 'text/csv'),
-  eaApply: el => { const m = eaHist[+el.dataset.i]; if (!m || !m.update) return; try { applyUpdate(m.update); m.applied = true; eaSaveHist(); } catch(e){ toast('Could not apply that change'); } render(); },
-  eaDiscard: el => { const m = eaHist[+el.dataset.i]; if (m){ m.update = null; eaSaveHist(); render(); } },
-  eaClear: () => { eaHist = []; eaSaveHist(); render(); },
+  eaApply: el => { const m = state.ea[+el.dataset.i]; if (!m || !m.update) return; try { applyUpdate(m.update); m.applied = true; eaSaveHist(); } catch(e){ toast('Could not apply that change'); } render(); },
+  eaDiscard: el => { const m = state.ea[+el.dataset.i]; if (m){ m.update = null; eaSaveHist(); render(); } },
+  eaClear: () => { if (confirm('Clear the EA conversation on all devices?')){ state.ea = []; eaSaveHist(); render(); } },
   applyUpdate: () => { const inp = document.createElement('input'); inp.type='file'; inp.accept='.json,application/json'; inp.onchange = () => { const f = inp.files[0]; if (!f) return; f.text().then(t => { try { applyUpdate(JSON.parse(t)); } catch(e){ toast('That file is not a valid update'); } }); }; inp.click(); },
   importJson: () => { modal('Restore backup', `<div class="f"><label for="fx-json">Paste the backup JSON (or open the file and copy its contents)</label><textarea id="fx-json" name="json" required></textarea></div><div class="f"><span class="help">This replaces everything currently in the ledger.</span></div>`, {okLabel:'Restore', danger:true, onOk: form => { try { const d = JSON.parse(form.json.value); if (!d || !Array.isArray(d.accounts)) throw 0; state.accounts=d.accounts; state.recurring=d.recurring||[]; state.history=d.history||[]; state.settings={...state.settings,...(d.settings||{}), sample:false}; state.tx=d.tx||{}; save(...DOCS, ...Object.keys(state.tx).map(m=>'tx:'+m)); render(); toast('Backup restored'); } catch(e){ toast('That does not look like a ledger backup'); return false; } }}); },
   wipe: () => { if (confirm('Erase all accounts, items, transactions and history? This cannot be undone.')) startFresh(); },
