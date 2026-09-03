@@ -361,7 +361,7 @@ let syncMode = 'local';
 const LS_KEY = 'cassa-ledger-v2';
 const GH_KEY = 'cassa-github-v1';
 const DOCS = ['accounts','recurring','history','settings'];
-const APP_VERSION = 'v6425864c';
+const APP_VERSION = 'v563e225c';
 
 const ghCfg = () => { try { return JSON.parse(localStorage.getItem(GH_KEY)||'null'); } catch(e){ return null; } };
 const setGhCfg = c => { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch(e){} };
@@ -542,6 +542,39 @@ function recordSnapshot(silent){
   save('history'); if (!silent) toast('Net worth snapshot recorded');
 }
 
+function monthlyAnchors(maxMonths=13){
+  const t = today(); const H = state.history; if (!H.length) return [];
+  const out = [];
+  for (let k=0; k<maxMonths; k++){
+    const target = iso(addMonths(t, -k));
+    let pt = null; for (let i=H.length-1; i>=0; i--){ if (H[i].date <= target){ pt = H[i]; break; } }
+    if (!pt) break;
+    if ((parseISO(target) - parseISO(pt.date)) / 86400000 > 10) break;   // gap too wide to call it "that month"
+    if (k===0 && !pt) continue;
+    out.push({ target, date: pt.date, netWorth: pt.netWorth });
+  }
+  out.reverse();
+  // today's live figure replaces the most recent point when it is today
+  if (out.length && out[out.length-1].target === iso(t)) out[out.length-1].netWorth = netWorth().net;
+  return out.map((a,i,arr) => ({ ...a, delta: i ? a.netWorth - arr[i-1].netWorth : null, pct: i && arr[i-1].netWorth ? (a.netWorth - arr[i-1].netWorth)/arr[i-1].netWorth : null }));
+}
+function deltaBars(items){
+  if (items.length < 2) return '<div class="empty">Needs at least two months of history</div>';
+  const W=chartW(), H=210, L=52, R=10, T=30, B=28; const pw=W-L-R, ph=H-T-B;
+  const vals = items.map(i=>i.delta); const max = Math.max(...vals, 0), min = Math.min(...vals, 0);
+  const ticks = niceTicks(min, max, 4); const lo = ticks[0], hi = ticks[ticks.length-1];
+  const y = v => T + ph - ((v-lo)/(hi-lo))*ph; const gw = pw/items.length; const bw = Math.max(6, gw*0.6);
+  let out = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Month-over-month change in net worth">`;
+  out += '<g class="grid">' + ticks.map(v=>`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}"${v===0?' style="stroke:var(--axis)"':''}/><text x="${L-6}" y="${y(v)+4}" text-anchor="end">${fmtK(v)}</text>`).join('') + '</g>';
+  items.forEach((it,i) => { const x = L + i*gw + (gw-bw)/2; const top = y(Math.max(0,it.delta)), bot = y(Math.min(0,it.delta));
+    out += `<g><rect class="hit" x="${L+i*gw}" y="${T}" width="${gw}" height="${ph}" data-tip="${esc(`<b>${fmtDateY(it.date)}</b>${fmt(it.netWorth)}<div class=r><span>vs prior month</span><span>${fmtS(it.delta)}${it.pct!=null?' ('+(it.pct*100).toFixed(1)+'%)':''}</span></div>`)}"/>`;
+    out += `<rect x="${x}" y="${top}" width="${bw}" height="${Math.max(1,bot-top)}" rx="3" fill="${it.delta>=0?'var(--good)':'var(--bad)'}"/>`;
+    out += `<text x="${L+i*gw+gw/2}" y="${it.delta>=0?top-5:bot+13}" text-anchor="middle" style="fill:var(--ink-2);font-weight:600">${fmtK(it.delta)}</text>`;
+    if (W>=560 || i%2===items.length%2) out += `<text x="${L+i*gw+gw/2}" y="${H-8}" text-anchor="middle">${parseISO(it.date).toLocaleDateString('en-US',{month:'short'})}</text>`;
+    out += '</g>'; });
+  return out + '</svg>';
+}
+
 /* ---------------- charts (inline SVG) ---------------- */
 const tipEl = $('#tip');
 function bindTips(root){
@@ -576,7 +609,7 @@ function cashflowBars(weeks){
   s += `<line class="axis" x1="${L}" x2="${W-R}" y1="${y(0)}" y2="${y(0)}"/></svg>`;
   return s;
 }
-function lineChart(points, {color='var(--bal)', label='', valueKey='v', zeroLine=false, H=200, dates=true, area=true} = {}){
+function lineChart(points, {color='var(--bal)', label='', valueKey='v', zeroLine=false, H=200, dates=true, area=true, markers=null} = {}){
   const W=chartW(), L=52, R=14, T=16, B=28; const pw=W-L-R, ph=H-T-B;
   if (!points.length) return '<div class="empty">Nothing to chart yet</div>';
   const vals = points.map(p=>p[valueKey]); let min=Math.min(...vals), max=Math.max(...vals); if (zeroLine){ min=Math.min(min,0); max=Math.max(max,0); }
@@ -587,6 +620,7 @@ function lineChart(points, {color='var(--bal)', label='', valueKey='v', zeroLine
   s += '<g class="grid">' + ticks.map(v=>`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}"${v===0&&zeroLine?' style="stroke:var(--axis)"':''}/><text x="${L-6}" y="${y(v)+4}" text-anchor="end">${fmtK(v)}</text>`).join('') + '</g>';
   if (area) s += `<path d="${path} L${x(points.length-1).toFixed(1)},${y(lo)} L${x(0)},${y(lo)} Z" fill="${color}" opacity="0.10"/>`;
   s += `<path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  if (markers){ const idx = new Map(points.map((p,i)=>[p.date,i])); for (const m of markers){ const i = idx.get(m); if (i==null) continue; s += `<line x1="${x(i)}" x2="${x(i)}" y1="${y(points[i][valueKey])}" y2="${T+ph}" stroke="${color}" stroke-width="1" stroke-dasharray="2 3" opacity="0.5"/><circle cx="${x(i)}" cy="${y(points[i][valueKey])}" r="3.5" fill="var(--surface)" stroke="${color}" stroke-width="2"/>`; } }
   const last = points[points.length-1]; s += `<circle cx="${x(points.length-1)}" cy="${y(last[valueKey])}" r="4.5" fill="${color}" stroke="var(--surface)" stroke-width="2"/>`;
   s += `<text x="${Math.min(x(points.length-1), W-R-10)}" y="${y(last[valueKey]) - 10}" text-anchor="end" style="fill:var(--ink);font-weight:600;font-size:12px">${fmtK(last[valueKey])}</text>`;
   const step = Math.max(1, Math.ceil(points.length/6));
@@ -760,7 +794,15 @@ function renderNetworth(){
     ${kpi('Liabilities', `<span class="neg">${nw.liabilities?'−':''}${fmt(nw.liabilities)}</span>`, `<span>${state.accounts.filter(a=>kindInfo(a.kind)[2]==='liability').length} accounts</span>`)}
     ${kpi('Since '+(first?fmtDateY(first.date):'start'), first ? deltaChip(nw.net, first.netWorth) : '<span class="muted">—</span>', first?`<span>${fmt(first.netWorth)} then</span>`:'')}
   </div>
-  <div class="card" style="margin-bottom:14px"><div class="card-head"><h3>Net worth over time</h3><span class="hint">${state.history.length} snapshots</span></div><div class="chart">${lineChart(pts,{color:'var(--nw)',label:'Net worth history',H:220})}</div></div>
+  ${(() => { const A = monthlyAnchors(); const dayN = today().getDate(); const sfx = dayN%10===1&&dayN!==11?'st':dayN%10===2&&dayN!==12?'nd':dayN%10===3&&dayN!==13?'rd':'th';
+    return `<div class="card" style="margin-bottom:14px"><div class="card-head"><h3>Net worth over time</h3><span class="hint">${state.history.length} snapshots · dots mark the ${dayN}${sfx} of each month</span></div><div class="chart">${lineChart(pts,{color:'var(--nw)',label:'Net worth history',H:220, markers: A.map(a=>a.date)})}</div></div>
+  <div class="grid two" style="margin-bottom:14px">
+    <div class="card"><div class="card-head"><h3>Month over month</h3><span class="hint">change vs the previous ${dayN}${sfx}</span></div><div class="chart">${deltaBars(A.filter(a=>a.delta!=null))}</div></div>
+    <div class="card"><div class="card-head"><h3>Every ${dayN}${sfx}</h3><span class="hint">today vs each month</span></div>
+      <div class="tbl-wrap"><table><thead><tr><th>Date</th><th class="r">Net worth</th><th class="r">vs prior</th><th class="r hide-sm">vs today</th></tr></thead><tbody>
+      ${A.slice().reverse().map((a,i)=>{ const cur = A[A.length-1].netWorth; const vt = cur - a.netWorth; return `<tr class="${i===0?'now':''}"><td>${fmtDateY(a.date)}${i===0?' <span class="chip">now</span>':''}</td><td class="r num"><b>${fmt(a.netWorth)}</b></td><td class="r num ${a.delta==null?'muted':a.delta>=0?'pos':'neg'}">${a.delta==null?'—':fmtS(a.delta)+(a.pct!=null?' <span class="muted small">'+(a.pct*100).toFixed(1)+'%</span>':'')}</td><td class="r num hide-sm ${i===0?'muted':vt>=0?'pos':'neg'}">${i===0?'—':fmtS(vt)+' <span class="muted small">'+(a.netWorth?(vt/a.netWorth*100).toFixed(1):'0')+'%</span>'}</td></tr>`; }).join('') || '<tr><td colspan="4" class="empty">Record snapshots (or apply a history update) to see monthly steps.</td></tr>'}
+      </tbody></table></div></div>
+  </div>`; })()}
   <div class="grid eq">
     <div class="grid" style="align-content:start">${section('Cash',['checking','savings'],1)}${section('Investments',['investment','retirement'],1)}${section('Property & other assets',['property','vehicle','other-asset'],1)}</div>
     <div class="grid" style="align-content:start">${section('Credit cards',['credit'],-1)}${section('Loans',['loan','other-liability'],-1)}${!state.accounts.length?'<div class="card empty">No accounts yet. Add checking, savings, brokerage, retirement, credit cards and loans.</div>':''}</div>
