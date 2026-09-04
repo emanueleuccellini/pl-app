@@ -361,7 +361,7 @@ let syncMode = 'local';
 const LS_KEY = 'cassa-ledger-v2';
 const GH_KEY = 'cassa-github-v1';
 const DOCS = ['accounts','recurring','history','settings','ea'];
-const APP_VERSION = 'vbc059735';
+const APP_VERSION = 'v7288ea8b';
 
 const ghCfg = () => { try { return JSON.parse(localStorage.getItem(GH_KEY)||'null'); } catch(e){ return null; } };
 const setGhCfg = c => { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch(e){} };
@@ -745,7 +745,7 @@ function renderCashflow(){
 let costFilter = { month: iso(today()).slice(0,7), cat: '', q: '', view: 'costs' };
 function renderCosts(){
   const months = Object.keys(state.tx).sort().reverse(); const t=today(); const cur = iso(t).slice(0,7); if (!months.includes(cur)) months.unshift(cur);
-  if (!months.includes(costFilter.month)) costFilter.month = months[0];
+  if (costFilter.month !== 'all' && !months.includes(costFilter.month)) costFilter.month = months[0];
   let rows = costFilter.month==='all' ? allTx() : (state.tx[costFilter.month]||[]);
   if (costFilter.cat) rows = rows.filter(r=>r.category===costFilter.cat);
   if (costFilter.q) { const q=costFilter.q.toLowerCase(); rows = rows.filter(r=>r.desc.toLowerCase().includes(q)); }
