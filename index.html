@@ -361,7 +361,7 @@ let syncMode = 'local';
 const LS_KEY = 'cassa-ledger-v2';
 const GH_KEY = 'cassa-github-v1';
 const DOCS = ['accounts','recurring','history','settings','ea'];
-const APP_VERSION = 'v7288ea8b';
+const APP_VERSION = 'v6c25fc32';
 
 const ghCfg = () => { try { return JSON.parse(localStorage.getItem(GH_KEY)||'null'); } catch(e){ return null; } };
 const setGhCfg = c => { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch(e){} };
@@ -519,9 +519,10 @@ function projection(){
   const items = state.recurring.filter(r => r.active !== false);
   for (let w=0; w<horizon; w++){
     const ws = addDays(start, w*7), we = addDays(ws, 6);
-    const from = w===0 ? t : ws;   // only future occurrences for the current week
+    const from = w===0 ? t : ws;   // recurring items: only future occurrences in the current week (past ones are already in the balance)
     const rows = [];
-    for (const it of items){ for (const d of occurrences(it, from, we)){ rows.push({date: iso(d), name: it.name, amount: it.type==='income' ? +it.amount : -Math.abs(+it.amount), category: it.category}); } }
+    for (const it of items){ const f = (w===0 && it.freq==='once') ? ws : from;   // one-off items dated earlier this week still count — you added them on purpose
+      for (const d of occurrences(it, f, we)){ rows.push({date: iso(d), name: it.name, amount: it.type==='income' ? +it.amount : -Math.abs(+it.amount), category: it.category, past: iso(d) < iso(t)}); } }
     const inflow = sum(rows.filter(r=>r.amount>0).map(r=>r.amount)), outflow = -sum(rows.filter(r=>r.amount<0).map(r=>r.amount));
     // actuals already booked this week
     let actIn=0, actOut=0;
@@ -1054,6 +1055,7 @@ Rules:
 - Account kinds: checking, savings, investment, retirement, property, vehicle, other-asset, credit, loan, other-liability. Liability balances are positive amounts owed.
 - Categories: Housing, Utilities, Groceries, Dining, Transport, Travel, Kids & School, Pet, Health, Shopping, Subscriptions, Insurance, Taxes, Gifts & Giving, Personal, Cash, Income, Reimbursement, Investment, Transfer, Other.
 - Match existing items by their exact name from the context. To change an amount or date, upsert with the same name and only the fields that change. Items can have an 'until' date (last occurrence). For a change that starts in the future (e.g. rent rises from January), do NOT move the existing item's anchor: give the existing item until = the day before, and add a new item (new name, e.g. 'Rent (from Jan 2027)') with anchor = the start date. To record a paid bill use txAdd (amount negative). To update a balance use accountsUpsert with balance.
+- Cash-flow rule: the projection starts from today's cash balance. Recurring items dated before today are assumed already in the balance and are not projected; one-off (freq once) items are always counted, even if dated earlier this week. If he says money already arrived, prefer updating the account balance (accountsUpsert) over adding an income item.
 - Keep 'reply' to 1-3 sentences; summarize what the update will do. If no change is needed (a question), set update to null.`;
 const EA_TOOL = { name:'ea_reply', description:'Reply to the user and optionally propose a data update the app will apply after confirmation.', input_schema:{ type:'object', properties:{
   reply:{type:'string'},
@@ -1146,7 +1148,7 @@ const ACTIONS = {
   delRec: el => { const r = state.recurring.find(x=>x.id===el.dataset.id); if (r && confirm(`Remove ${r.name}?`)){ state.recurring = state.recurring.filter(x=>x!==r); save('recurring'); render(); } },
   editTx: el => txForm(allTx().find(t=>t.id===el.dataset.id)),
   delTx: el => { const t = allTx().find(x=>x.id===el.dataset.id); if (!t) return; const k = monthKey(t.date); state.tx[k] = state.tx[k].filter(x=>x!==t); if (!state.tx[k].length) delete state.tx[k]; save('tx:'+k); render(); },
-  weekDetail: el => { const w = projection().weeks[+el.dataset.i]; modal(`Week of ${fmtDateY(w.start)}`, `<div class="list">${w.rows.map(r=>`<div class="item"><div><div class="t">${esc(r.name)}</div><div class="s">${fmtDateY(r.date)} · ${esc(r.category||'')}</div></div><div class="amt num ${r.amount>0?'pos':''}">${fmtS(r.amount)}</div></div>`).join('')||'<div class="empty">Nothing planned this week</div>'}</div><div class="small muted">In ${fmt(w.inflow)} · Out ${fmt(w.outflow)} · Net ${fmtS(w.net)} · Ending balance <b>${fmtS(w.balance)}</b>${w.i===0?` · Already booked this week: ${fmt(w.actIn)} in, ${fmt(w.actOut)} out`:''}</div>`, {}); },
+  weekDetail: el => { const w = projection().weeks[+el.dataset.i]; modal(`Week of ${fmtDateY(w.start)}`, `<div class="list">${w.rows.map(r=>`<div class="item"><div><div class="t">${esc(r.name)}</div><div class="s">${fmtDateY(r.date)} · ${esc(r.category||'')}${r.past?' · <span class="chip">dated earlier this week</span>':''}</div></div><div class="amt num ${r.amount>0?'pos':''}">${fmtS(r.amount)}</div></div>`).join('')||'<div class="empty">Nothing planned this week</div>'}</div><div class="small muted">In ${fmt(w.inflow)} · Out ${fmt(w.outflow)} · Net ${fmtS(w.net)} · Ending balance <b>${fmtS(w.balance)}</b>${w.i===0?` · Already booked this week: ${fmt(w.actIn)} in, ${fmt(w.actOut)} out`:''}</div>`, {}); },
   exportJson: () => deliver(`pl-app-backup-${iso(today())}.json`, JSON.stringify({exported: new Date().toISOString(), accounts:state.accounts, recurring:state.recurring, history:state.history, settings:state.settings, tx:state.tx}, null, 2), 'application/json'),
   exportCsv: () => deliver(`transactions-${iso(today())}.csv`, toCSV([['Date','Description','Amount','Category','Account','Source'], ...allTx().sort((a,b)=>a.date.localeCompare(b.date)).map(t=>[t.date,t.desc,t.amount.toFixed(2),t.category,t.account||'',t.source||''])]), 'text/csv'),
   eaApply: el => { const m = state.ea[+el.dataset.i]; if (!m || !m.update) return; try { applyUpdate(m.update); m.applied = true; eaSaveHist(); } catch(e){ toast('Could not apply that change'); } render(); },
