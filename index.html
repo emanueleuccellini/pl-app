@@ -361,7 +361,7 @@ let syncMode = 'local';
 const LS_KEY = 'cassa-ledger-v2';
 const GH_KEY = 'cassa-github-v1';
 const DOCS = ['accounts','recurring','history','settings','ea'];
-const APP_VERSION = 'v0a17ab6c';
+const APP_VERSION = 'vad21ace2';
 
 const ghCfg = () => { try { return JSON.parse(localStorage.getItem(GH_KEY)||'null'); } catch(e){ return null; } };
 const setGhCfg = c => { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch(e){} };
@@ -582,17 +582,18 @@ function monthlyAnchors(maxMonths=13){
 }
 function deltaBars(items){
   if (items.length < 2) return '<div class="empty">Needs at least two months of history</div>';
-  const W=chartW(), H=210, L=52, R=10, T=30, B=28; const pw=W-L-R, ph=H-T-B;
-  const vals = items.map(i=>i.delta); const max = Math.max(...vals, 0), min = Math.min(...vals, 0);
+  const rows = items.slice().reverse();                       // newest at the top, same order as the table beside it
+  const W = chartW(), rowH = 34, L = 70, R = 76, T = 22, B = 10; const H = T + rows.length*rowH + B; const pw = W - L - R;
+  const vals = rows.map(i=>i.delta); const max = Math.max(...vals, 0), min = Math.min(...vals, 0);
   const ticks = niceTicks(min, max, 4); const lo = ticks[0], hi = ticks[ticks.length-1];
-  const y = v => T + ph - ((v-lo)/(hi-lo))*ph; const gw = pw/items.length; const bw = Math.max(6, gw*0.6);
+  const x = v => L + ((v-lo)/(hi-lo))*pw; const bh = rowH*0.58;
   let out = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Month-over-month change in net worth">`;
-  out += '<g class="grid">' + ticks.map(v=>`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}"${v===0?' style="stroke:var(--axis)"':''}/><text x="${L-6}" y="${y(v)+4}" text-anchor="end">${fmtK(v)}</text>`).join('') + '</g>';
-  items.forEach((it,i) => { const x = L + i*gw + (gw-bw)/2; const top = y(Math.max(0,it.delta)), bot = y(Math.min(0,it.delta));
-    out += `<g><rect class="hit" x="${L+i*gw}" y="${T}" width="${gw}" height="${ph}" data-tip="${esc(`<b>${fmtDateY(it.date)}</b>${fmt(it.netWorth)}<div class=r><span>vs prior month</span><span>${fmtS(it.delta)}${it.pct!=null?' ('+(it.pct*100).toFixed(1)+'%)':''}</span></div>`)}"/>`;
-    out += `<rect x="${x}" y="${top}" width="${bw}" height="${Math.max(1,bot-top)}" rx="3" fill="${it.delta>=0?'var(--good)':'var(--bad)'}"/>`;
-    out += `<text x="${L+i*gw+gw/2}" y="${it.delta>=0?top-5:bot+13}" text-anchor="middle" style="fill:var(--ink-2);font-weight:600">${fmtK(it.delta)}</text>`;
-    if (W>=560 || i%2===items.length%2) out += `<text x="${L+i*gw+gw/2}" y="${H-8}" text-anchor="middle">${parseISO(it.date).toLocaleDateString('en-US',{month:'short'})}</text>`;
+  out += '<g class="grid">' + ticks.map(v=>`<line x1="${x(v)}" x2="${x(v)}" y1="${T-6}" y2="${H-B}"${v===0?' style="stroke:var(--axis)"':''}/><text x="${x(v)}" y="${T-10}" text-anchor="middle">${fmtK(v)}</text>`).join('') + '</g>';
+  rows.forEach((it,i) => { const y = T + i*rowH; const x0 = x(Math.min(0,it.delta)), x1 = x(Math.max(0,it.delta)); const pos = it.delta >= 0;
+    out += `<g><rect class="hit" x="0" y="${y}" width="${W}" height="${rowH}" data-tip="${esc(`<b>${fmtDateY(it.date)}</b>${fmt(it.netWorth)}<div class=r><span>vs prior month</span><span>${fmtS(it.delta)}${it.pct!=null?' ('+(it.pct*100).toFixed(1)+'%)':''}</span></div>`)}"/>`;
+    out += `<text x="${L-8}" y="${y+rowH/2+4}" text-anchor="end" style="fill:var(--ink-2);font-weight:600">${parseISO(it.date).toLocaleDateString('en-US',{month:'short'})} ${String(parseISO(it.date).getFullYear()).slice(2)}</text>`;
+    out += `<rect x="${x0}" y="${y+(rowH-bh)/2}" width="${Math.max(1,x1-x0)}" height="${bh}" rx="3" fill="${pos?'var(--good)':'var(--bad)'}"/>`;
+    out += `<text x="${x(0)+6 + (pos ? (x1-x(0)) : 0)}" y="${y+rowH/2+4}" text-anchor="start" style="fill:var(--ink);font-weight:600">${fmtS(it.delta)}${it.pct!=null?` <tspan style="fill:var(--ink-3);font-weight:400">${(it.pct*100).toFixed(1)}%</tspan>`:''}</text>`;
     out += '</g>'; });
   return out + '</svg>';
 }
