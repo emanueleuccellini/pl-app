@@ -361,7 +361,7 @@ let syncMode = 'local';
 const LS_KEY = 'cassa-ledger-v2';
 const GH_KEY = 'cassa-github-v1';
 const DOCS = ['accounts','recurring','history','settings','ea'];
-const APP_VERSION = 'vf13b9f1c';
+const APP_VERSION = 'vaee7dece';
 
 const ghCfg = () => { try { return JSON.parse(localStorage.getItem(GH_KEY)||'null'); } catch(e){ return null; } };
 const setGhCfg = c => { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch(e){} };
@@ -556,8 +556,10 @@ function autoBook(){
   if (!state.settings.autoBookFrom){ state.settings.autoBookFrom = tI; save('settings'); }
   const from = parseISO(state.settings.autoBookFrom); const defaultAcct = state.accounts.find(a=>kindInfo(a.kind)[3])?.name || '';
   const have = new Set(allTx().map(x=>x.hash)); const touched = new Set(); let booked = 0;
+  const cashNames = cashAccountNames();
   for (const it of state.recurring){
     if (it.active === false) continue; it.booked ||= [];
+    const acct = it.account || defaultAcct; if (!cashNames.has(String(acct).toLowerCase())) continue;   // card items are not booked: the statement import brings the real lines
     const start = it.freq==='once' && state.settings.openingDate ? addDays(parseISO(state.settings.openingDate), 1) : from;   // one-offs since the opening balance are yours by definition
     for (const d of occurrences(it, start, t)){ const di = iso(d); if (it.booked.includes(di)) continue;
       const amount = it.type==='income' ? Math.abs(+it.amount) : -Math.abs(+it.amount); const desc = it.name; const h = txHash(di, desc, amount);
@@ -922,7 +924,7 @@ function recurringForm(r, type){
     <div class="f2"><div class="f" id="f-day"><label for="fx-day">Day of month</label><input id="fx-day" name="day" type="number" min="1" max="31" value="${esc(r.day||1)}"></div><div class="f" id="f-anchor"><label for="fx-anchor" id="anchor-lbl">Date</label><input id="fx-anchor" name="anchor" type="date" value="${esc(r.anchor||iso(today()))}"></div></div>
     <div class="f2">${selectField('active','Status',[['1','Active'],['0','Paused (kept, not projected)']], r.active===false?'0':'1')}${field('until','Ends on (optional)','date',r.until||'')}</div>
     ${selectField('account','Paid from / into',[['','— default cash account —'],...state.accounts.map(a=>[a.name,a.name+(kindInfo(a.kind)[3]?' (cash)':'')])], r.account||'')}
-    <div class="f"><span class="help">When the date arrives the item is booked automatically as a transaction (it appears in Costs); choose a cash account so it also moves the cash-flow ledger, or the Amex card if it will be paid by card.</span></div>`, { onOk: form => {
+    <div class="f"><span class="help">Items on a cash account are booked automatically as transactions when their date arrives (they appear in Costs and move the cash-flow ledger). Items on a card are plan-only: the card statement import brings the real lines.</span></div>`, { onOk: form => {
       const d = fd(form); const rec = {id:r.id||uid(), name:d.name.trim(), amount:Math.abs(+d.amount||0), type:d.type, freq:d.freq, day:+d.day||1, category:d.category, active:d.active==='1', anchor:d.anchor||iso(today()), until:d.until||undefined, account:d.account||undefined, booked:r.booked||[]};
       if (isNew) state.recurring.push(rec); else Object.assign(state.recurring.find(x=>x.id===r.id), rec);
       save('recurring'); const n = autoBook(); render(); toast(isNew?(n?'Added and booked':'Added'):'Updated');
@@ -1096,7 +1098,7 @@ Rules:
 - Account kinds: checking, savings, investment, retirement, property, vehicle, other-asset, credit, loan, other-liability. Liability balances are positive amounts owed.
 - Categories: Housing, Utilities, Groceries, Dining, Transport, Travel, Kids & School, Pet, Health, Shopping, Subscriptions, Insurance, Taxes, Gifts & Giving, Personal, Cash, Income, Reimbursement, Investment, Transfer, Other.
 - Match existing items by their exact name from the context. To change an amount or date, upsert with the same name and only the fields that change. Items can have an 'until' date (last occurrence). For a change that starts in the future (e.g. rent rises from January), do NOT move the existing item's anchor: give the existing item until = the day before, and add a new item (new name, e.g. 'Rent (from Jan 2027)') with anchor = the start date. To record a paid bill use txAdd (amount negative). To update a balance use accountsUpsert with balance.
-- Booking rule: planned items (recurring and one-off) are booked automatically as transactions when their date arrives, so they appear in Costs and, if their account is a cash account, in the cash-flow ledger; a later CSV import replaces the planned row with the real one. For a cost paid today or earlier, use txAdd (it books immediately); for a future cost, use recurringUpsert with freq once.
+- Booking rule: planned items on a cash account are booked automatically as transactions when their date arrives (they appear in Costs and in the cash-flow ledger); a later Fidelity import replaces the planned row with the real one. Items on the Amex card are plan-only placeholders (e.g. the monthly Amex payment estimate) — the Amex statement import brings the real lines. For a cost paid today or earlier from cash, use txAdd; for a future cost, recurringUpsert with freq once.
 - Cash-flow rule: if an opening balance is set (settings.openingDate/openingAmount), the ledger starts there, applies booked cash-account transactions up to today, then the plan; otherwise it starts from today's cash balance. Recurring items dated before today are assumed already in the balance and are not projected; one-off (freq once) items are always counted, even if dated earlier this week. If he says money already arrived, prefer updating the account balance (accountsUpsert) over adding an income item.
 - Keep 'reply' to 1-3 sentences; summarize what the update will do. If no change is needed (a question), set update to null.`;
 const EA_TOOL = { name:'ea_reply', description:'Reply to the user and optionally propose a data update the app will apply after confirmation.', input_schema:{ type:'object', properties:{
