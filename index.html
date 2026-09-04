@@ -361,7 +361,7 @@ let syncMode = 'local';
 const LS_KEY = 'cassa-ledger-v2';
 const GH_KEY = 'cassa-github-v1';
 const DOCS = ['accounts','recurring','history','settings','ea'];
-const APP_VERSION = 'v6c25fc32';
+const APP_VERSION = 'v0a17ab6c';
 
 const ghCfg = () => { try { return JSON.parse(localStorage.getItem(GH_KEY)||'null'); } catch(e){ return null; } };
 const setGhCfg = c => { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch(e){} };
@@ -512,26 +512,41 @@ function occurrences(item, from, to){
   }
   return out;
 }
+const cashAccountNames = () => new Set(state.accounts.filter(a=>kindInfo(a.kind)[3]).map(a=>a.name.toLowerCase()));
+const isCashTx = (x, names) => x.account && names.has(String(x.account).toLowerCase());
 function projection(){
   const t = today(); const horizon = state.settings.horizon || 13;
-  const start = weekStart(t); const weeks = [];
-  let bal = cashOnHand();
   const items = state.recurring.filter(r => r.active !== false);
-  for (let w=0; w<horizon; w++){
-    const ws = addDays(start, w*7), we = addDays(ws, 6);
-    const from = w===0 ? t : ws;   // recurring items: only future occurrences in the current week (past ones are already in the balance)
-    const rows = [];
-    for (const it of items){ const f = (w===0 && it.freq==='once') ? ws : from;   // one-off items dated earlier this week still count — you added them on purpose
-      for (const d of occurrences(it, f, we)){ rows.push({date: iso(d), name: it.name, amount: it.type==='income' ? +it.amount : -Math.abs(+it.amount), category: it.category, past: iso(d) < iso(t)}); } }
+  const op = state.settings.openingDate && state.settings.openingAmount != null ? { date: state.settings.openingDate, amount: +state.settings.openingAmount } : null;
+  const names = cashAccountNames();
+  const actualsBetween = (a, b) => allTx().filter(x => isCashTx(x, names) && x.date >= a && x.date <= b);
+  let bal, start, firstFutureWeek = 0;
+  if (op){
+    bal = op.amount; start = weekStart(addDays(parseISO(op.date), 1));
+    firstFutureWeek = Math.floor((weekStart(t) - start) / (7*86400000));
+  } else { bal = cashOnHand(); start = weekStart(t); }
+  const weeks = []; const total = firstFutureWeek + horizon;
+  for (let w=0; w<total; w++){
+    const ws = addDays(start, w*7), we = addDays(ws, 6); const rows = [];
+    const isPast = w < firstFutureWeek, isCurrent = w === firstFutureWeek;
+    if (op && (isPast || isCurrent)){
+      const from = w===0 ? iso(addDays(parseISO(op.date),1)) : iso(ws); const to = isCurrent ? iso(t) : iso(we);
+      for (const x of actualsBetween(from, to)) rows.push({date:x.date, name:x.desc, amount:x.amount, category:x.category, actual:true});
+    }
+    if (!isPast){
+      const from = isCurrent ? addDays(t, op ? 1 : 0) : ws;   // with an opening balance, today's actuals are already booked; without one, today's items are still ahead
+      for (const it of items){ const f = (isCurrent && it.freq==='once' && !op) ? ws : from;
+        for (const d of occurrences(it, f, we)){ rows.push({date: iso(d), name: it.name, amount: it.type==='income' ? +it.amount : -Math.abs(+it.amount), category: it.category, past: iso(d) < iso(t)}); } }
+    }
     const inflow = sum(rows.filter(r=>r.amount>0).map(r=>r.amount)), outflow = -sum(rows.filter(r=>r.amount<0).map(r=>r.amount));
-    // actuals already booked this week
-    let actIn=0, actOut=0;
-    if (w===0){ for (const x of allTx()){ const d=parseISO(x.date); if (d>=ws && d<=we){ if (x.amount>0) actIn+=x.amount; else actOut-=x.amount; } } }
+    let actIn=0, actOut=0; if (isCurrent){ for (const x of actualsBetween(iso(ws), iso(we))){ if (x.amount>0) actIn+=x.amount; else actOut-=x.amount; } }
     const net = inflow - outflow; bal += net;
-    weeks.push({i:w, start: iso(ws), end: iso(we), inflow, outflow, net, balance: bal, rows: rows.sort((a,b)=>a.date.localeCompare(b.date)), actIn, actOut});
+    weeks.push({i:w, start: iso(ws), end: iso(we), inflow, outflow, net, balance: bal, rows: rows.sort((a,b)=>a.date.localeCompare(b.date)), actIn, actOut, past:isPast, current:isCurrent});
   }
-  const low = weeks.reduce((m,w) => w.balance < m.balance ? w : m, weeks[0] || {balance:bal});
-  return {weeks, low, startBalance: cashOnHand()};
+  const future = weeks.filter(w=>!w.past);
+  const low = future.reduce((m,w) => w.balance < m.balance ? w : m, future[0] || {balance:bal});
+  const todayBalance = op ? (weeks[firstFutureWeek-1]?.balance ?? op.amount) + sum(weeks[firstFutureWeek]?.rows.filter(r=>r.actual).map(r=>r.amount) || []) : cashOnHand();
+  return {weeks, low, startBalance: todayBalance, opening: op, currentIndex: firstFutureWeek, accountCash: cashOnHand()};
 }
 function monthTotals(key){ const rows = state.tx[key]||[]; const spend = -sum(rows.filter(r=>r.amount<0 && r.category!=='Transfer' && r.category!=='Investment').map(r=>r.amount)); const income = sum(rows.filter(r=>r.amount>0 && r.category!=='Transfer').map(r=>r.amount)); return {spend, income, count: rows.length}; }
 function byCategory(rows){ const m = {}; for (const r of rows){ if (r.amount>=0 || r.category==='Transfer' || r.category==='Investment') continue; m[r.category] = (m[r.category]||0) - r.amount; } return Object.entries(m).sort((a,b)=>b[1]-a[1]); }
@@ -682,9 +697,9 @@ function renderOverview(){
   const nw = netWorth(); const pr = projection(); const t = today(); const mk = iso(t).slice(0,7); const mt = monthTotals(mk);
   const prevMonthKey = iso(addMonths(new Date(t.getFullYear(), t.getMonth(), 1), -1)).slice(0,7); const pm = monthTotals(prevMonthKey);
   const prevH = prevMonthPoint();
-  const w0 = pr.weeks[0]; const dayOfMonth = t.getDate(); const daysInMonth = new Date(t.getFullYear(),t.getMonth()+1,0).getDate();
-  const weeklyOut = pr.weeks.length ? sum(pr.weeks.map(w=>w.outflow))/pr.weeks.length : 0;
-  const balPts = [{date: iso(t), v: pr.startBalance, label:'Today'}].concat(pr.weeks.map(w=>({date:w.end, v:w.balance, sub:`In ${fmt(w.inflow)} · Out ${fmt(w.outflow)}`})));
+  const w0 = pr.weeks[pr.currentIndex]; const dayOfMonth = t.getDate(); const daysInMonth = new Date(t.getFullYear(),t.getMonth()+1,0).getDate();
+  const fut = pr.weeks.filter(w=>!w.past); const weeklyOut = fut.length ? sum(fut.map(w=>w.outflow))/fut.length : 0;
+  const balPts = (pr.opening ? [{date: pr.opening.date, v: pr.opening.amount, label: fmtDate(pr.opening.date)}] : [{date: iso(t), v: pr.startBalance, label:'Today'}]).concat(pr.weeks.map(w=>({date:w.end, v:w.balance, sub:`${w.past?'Actual · ':''}In ${fmt(w.inflow)} · Out ${fmt(w.outflow)}`})));
   return `
   <div class="page-head"><div><h1>Overview</h1><p>${t.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})}</p></div>
     <div class="actions"><button class="btn" data-act="addTx">+ Cost</button><button class="btn" data-act="importCsv">Import CSV</button><button class="btn primary" data-act="snapshot">Record net worth</button></div></div>
@@ -692,7 +707,7 @@ function renderOverview(){
     ${kpi('Net worth', fmt(nw.net), prevH ? deltaChip(nw.net, prevH.netWorth) + '<span>vs '+fmtDate(prevH.date)+'</span>' : '')}
     ${kpi('Cash on hand', fmt(pr.startBalance), `<span>${state.accounts.filter(a=>kindInfo(a.kind)[3]).length} cash accounts</span>`)}
     ${kpi('This week', `<span class="${(w0?w0.net:0)>=0?'pos':'neg'}">${fmtS(w0?w0.net:0)}</span>`, `<span>${fmt(w0?w0.inflow:0)} in · ${fmt(w0?w0.outflow:0)} out</span>`)}
-    ${kpi(pr.weeks.length+'-week low', `<span class="${pr.low.balance<0?'neg':''}">${fmtS(pr.low.balance)}</span>`, `<span>${pr.low.start ? 'week of '+fmtDate(pr.low.start) : '—'}</span>`)}
+    ${kpi((state.settings.horizon||13)+'-week low', `<span class="${pr.low.balance<0?'neg':''}">${fmtS(pr.low.balance)}</span>`, `<span>${pr.low.start ? 'week of '+fmtDate(pr.low.start) : '—'}</span>`)}
   </div>
   <div class="grid two">
     <div class="card"><div class="card-head"><h3>Projected cash balance</h3><span class="hint">Cash accounts + planned inflows − planned outflows</span></div>
@@ -707,23 +722,23 @@ function renderOverview(){
   </div>
   <div class="grid eq" style="margin-top:14px">
     <div class="card"><div class="card-head"><h3>Weekly in / out</h3><div class="legend"><span><i style="background:var(--in)"></i>Inflow</span><span><i style="background:var(--out)"></i>Outflow</span></div></div>
-      <div class="chart">${cashflowBars(pr.weeks)}</div>
+      <div class="chart">${cashflowBars(pr.weeks.filter(w=>!w.past))}</div>
       <div class="small muted" style="margin-top:6px">Average planned outflow: <b class="num">${fmt(weeklyOut)}</b> per week</div></div>
     <div class="card"><div class="card-head"><h3>Coming up</h3><span class="hint">next 14 days</span></div>
-      <div class="list">${pr.weeks.slice(0,3).flatMap(w=>w.rows).filter(r => parseISO(r.date) <= addDays(t,14)).slice(0,6).map(r=>`<div class="item"><div><div class="t">${esc(r.name)}</div><div class="s">${fmtDateY(r.date)} · ${esc(r.category||'')}</div></div><div class="amt num ${r.amount>0?'pos':''}">${fmtS(r.amount)}</div></div>`).join('') || '<div class="empty">Nothing scheduled in the next two weeks. Add recurring items under Cash flow.</div>'}</div></div>
+      <div class="list">${pr.weeks.slice(pr.currentIndex, pr.currentIndex+3).flatMap(w=>w.rows).filter(r => !r.actual && parseISO(r.date) >= t && parseISO(r.date) <= addDays(t,14)).slice(0,6).map(r=>`<div class="item"><div><div class="t">${esc(r.name)}</div><div class="s">${fmtDateY(r.date)} · ${esc(r.category||'')}</div></div><div class="amt num ${r.amount>0?'pos':''}">${fmtS(r.amount)}</div></div>`).join('') || '<div class="empty">Nothing scheduled in the next two weeks. Add recurring items under Cash flow.</div>'}</div></div>
   </div>`;
 }
 
 function renderCashflow(){
   const pr = projection(); const t = today();
-  const balPts = [{date: iso(t), v: pr.startBalance, label:'Today'}].concat(pr.weeks.map(w=>({date:w.end, v:w.balance})));
+  const balPts = pr.opening ? [{date: pr.opening.date, v: pr.opening.amount, label: fmtDate(pr.opening.date)}].concat(pr.weeks.map(w=>({date:w.end, v:w.balance, sub: w.past?'actual':''}))) : [{date: iso(t), v: pr.startBalance, label:'Today'}].concat(pr.weeks.map(w=>({date:w.end, v:w.balance})));
   const inc = state.recurring.filter(r=>r.type==='income'), exp = state.recurring.filter(r=>r.type!=='income');
   const monthly = r => { const a=+r.amount||0; return {weekly:a*52/12, biweekly:a*26/12, semimonthly:a*2, monthly:a, quarterly:a/3, yearly:a/12, once:0}[r.freq] ?? a; };
   const mIn = sum(inc.filter(r=>r.active!==false).map(monthly)), mOut = sum(exp.filter(r=>r.active!==false).map(monthly));
   const row = r => `<div class="item"><div><div class="t">${esc(r.name)} ${r.active===false?'<span class="chip">paused</span>':''}</div><div class="s">${esc(FREQS.find(f=>f[0]===r.freq)?.[1]||r.freq)}${r.freq==='once'&&r.anchor?' · '+fmtDateY(r.anchor):['monthly','quarterly','yearly'].includes(r.freq)?' · day '+(r.day||parseISO(r.anchor||iso(t)).getDate()):''}${r.until?' · until '+fmtDateY(r.until):''} · ${esc(r.category||'')}</div></div><div class="amt num ${r.type==='income'?'pos':''}">${r.type==='income'?'+':'−'}${fmt(r.amount)}</div><div class="rowbtns"><button title="Edit" data-act="editRec" data-id="${r.id}">Edit</button><button title="Delete" data-act="delRec" data-id="${r.id}">✕</button></div></div>`;
   return `
-  <div class="page-head"><div><h1>Cash flow</h1><p>Weekly projection for the next ${pr.weeks.length} weeks, from ${fmt(pr.startBalance)} in cash accounts today</p></div>
-    <div class="actions"><button class="btn" data-act="addRec" data-type="income">+ Income</button><button class="btn primary" data-act="addRec" data-type="expense">+ Expense</button></div></div>
+  <div class="page-head"><div><h1>Cash flow</h1><p>${pr.opening ? `From an opening balance of ${fmt(pr.opening.amount)} on ${fmtDateY(pr.opening.date)}: booked movements since, then the plan for the next ${state.settings.horizon||13} weeks. Cash today ${fmt(pr.startBalance)}${Math.abs(pr.startBalance - pr.accountCash) > 1 ? ` (accounts say ${fmt(pr.accountCash)})` : ''}.` : `Weekly projection for the next ${pr.weeks.length} weeks, from ${fmt(pr.startBalance)} in cash accounts today`}</p></div>
+    <div class="actions"><button class="btn" data-act="opening">Opening balance</button><button class="btn" data-act="addRec" data-type="income">+ Income</button><button class="btn primary" data-act="addRec" data-type="expense">+ Expense</button></div></div>
   <div class="kpis">
     ${kpi('Planned monthly in', fmt(mIn), '<span>recurring income</span>')}
     ${kpi('Planned monthly out', fmt(mOut), '<span>recurring expenses</span>')}
@@ -734,7 +749,7 @@ function renderCashflow(){
     <div class="chart">${lineChart(balPts,{color:'var(--bal)',label:'Projected cash balance',zeroLine:true})}</div></div>
   <div class="card" style="margin-bottom:14px"><div class="card-head"><h3>Week by week</h3><span class="hint">Tap a week to see what's in it</span></div>
     <div class="tbl-wrap"><table><thead><tr><th>Week</th><th class="r">In</th><th class="r">Out</th><th class="r">Net</th><th class="r">Balance</th></tr></thead><tbody>
-    ${pr.weeks.map(w=>`<tr class="${w.i===0?'now':''} ${w===pr.low&&w.balance<0?'low':''}" data-act="weekDetail" data-i="${w.i}" style="cursor:pointer"><td>${fmtDate(w.start)} – ${fmtDate(w.end)}${w.i===0?' <span class="chip">now</span>':''}</td><td class="r num pos">${w.inflow?fmt(w.inflow):'<span class="muted">—</span>'}</td><td class="r num">${w.outflow?fmt(w.outflow):'<span class="muted">—</span>'}</td><td class="r num ${w.net<0?'neg':'pos'}">${fmtS(w.net)}</td><td class="r num ${w.balance<0?'neg':''}"><b>${fmtS(w.balance)}</b></td></tr>`).join('')}
+    ${pr.weeks.map(w=>`<tr class="${w.current?'now':''} ${w===pr.low&&w.balance<0?'low':''}" data-act="weekDetail" data-i="${w.i}" style="cursor:pointer${w.past?';color:var(--ink-3)':''}"><td>${fmtDate(w.start)} – ${fmtDate(w.end)}${w.current?' <span class="chip">now</span>':w.past?' <span class="chip src">actual</span>':''}</td><td class="r num pos">${w.inflow?fmt(w.inflow):'<span class="muted">—</span>'}</td><td class="r num">${w.outflow?fmt(w.outflow):'<span class="muted">—</span>'}</td><td class="r num ${w.net<0?'neg':'pos'}">${fmtS(w.net)}</td><td class="r num ${w.balance<0?'neg':''}"><b>${fmtS(w.balance)}</b></td></tr>`).join('')}
     <tr class="tot"><td>Total</td><td class="r num">${fmt(sum(pr.weeks.map(w=>w.inflow)))}</td><td class="r num">${fmt(sum(pr.weeks.map(w=>w.outflow)))}</td><td class="r num">${fmtS(sum(pr.weeks.map(w=>w.net)))}</td><td class="r num">${pr.weeks.length?fmtS(pr.weeks[pr.weeks.length-1].balance):'—'}</td></tr>
     </tbody></table></div></div>
   <div class="grid eq">
@@ -1035,7 +1050,7 @@ ${state.accounts.map(a=>`${a.name} | ${a.kind} | ${a.balance} | ${a.updated}`).j
 Net worth ${fmt(nw.net)} (assets ${fmt(nw.assets)}, liabilities ${fmt(nw.liabilities)}). Cash on hand (checking+savings) ${fmt(cashOnHand())}.
 RECURRING ITEMS (name | type | amount | freq | day | anchor | until | category | active):
 ${state.recurring.map(r=>`${r.name} | ${r.type} | ${r.amount} | ${r.freq} | ${r.day||''} | ${r.anchor||''} | ${r.until||''} | ${r.category} | ${r.active!==false}`).join('\n') || '(none)'}
-PROJECTION next ${pr.weeks.length} weeks: lowest cash ${fmt(pr.low.balance)} in week of ${pr.low.start}; ending ${fmt(pr.weeks[pr.weeks.length-1]?.balance||0)}.
+${pr.opening?`OPENING BALANCE ${fmt(pr.opening.amount)} on ${pr.opening.date}; cash today ${fmt(pr.startBalance)}.\n`:''}PROJECTION next ${state.settings.horizon||13} weeks: lowest cash ${fmt(pr.low.balance)} in week of ${pr.low.start}; ending ${fmt(pr.weeks[pr.weeks.length-1]?.balance||0)}.
 Weeks (start | in | out | end balance): ${pr.weeks.map(w=>`${w.start} | ${Math.round(w.inflow)} | ${Math.round(w.outflow)} | ${Math.round(w.balance)}`).join('; ')}
 TRANSACTION HISTORY: ${all.length} transactions from ${first||'—'} to ${iso(t)} are stored in the app (Amex card + Fidelity account). You can query any of them with the tools.
 MONTHLY TOTALS (spending excludes Transfer and Investment; amounts in USD):
@@ -1055,7 +1070,7 @@ Rules:
 - Account kinds: checking, savings, investment, retirement, property, vehicle, other-asset, credit, loan, other-liability. Liability balances are positive amounts owed.
 - Categories: Housing, Utilities, Groceries, Dining, Transport, Travel, Kids & School, Pet, Health, Shopping, Subscriptions, Insurance, Taxes, Gifts & Giving, Personal, Cash, Income, Reimbursement, Investment, Transfer, Other.
 - Match existing items by their exact name from the context. To change an amount or date, upsert with the same name and only the fields that change. Items can have an 'until' date (last occurrence). For a change that starts in the future (e.g. rent rises from January), do NOT move the existing item's anchor: give the existing item until = the day before, and add a new item (new name, e.g. 'Rent (from Jan 2027)') with anchor = the start date. To record a paid bill use txAdd (amount negative). To update a balance use accountsUpsert with balance.
-- Cash-flow rule: the projection starts from today's cash balance. Recurring items dated before today are assumed already in the balance and are not projected; one-off (freq once) items are always counted, even if dated earlier this week. If he says money already arrived, prefer updating the account balance (accountsUpsert) over adding an income item.
+- Cash-flow rule: if an opening balance is set (settings.openingDate/openingAmount), the ledger starts there, applies booked cash-account transactions up to today, then the plan; otherwise it starts from today's cash balance. Recurring items dated before today are assumed already in the balance and are not projected; one-off (freq once) items are always counted, even if dated earlier this week. If he says money already arrived, prefer updating the account balance (accountsUpsert) over adding an income item.
 - Keep 'reply' to 1-3 sentences; summarize what the update will do. If no change is needed (a question), set update to null.`;
 const EA_TOOL = { name:'ea_reply', description:'Reply to the user and optionally propose a data update the app will apply after confirmation.', input_schema:{ type:'object', properties:{
   reply:{type:'string'},
@@ -1066,7 +1081,7 @@ const EA_TOOL = { name:'ea_reply', description:'Reply to the user and optionally
     recurringDelete:{type:'array', items:{type:'string'}},
     txAdd:{type:'array', items:{type:'object', properties:{date:{type:'string'},desc:{type:'string'},amount:{type:'number'},category:{type:'string'},account:{type:'string'}}, required:['date','desc','amount']}},
     txDelete:{type:'array', items:{type:'object', properties:{date:{type:'string'},desc:{type:'string'},amount:{type:'number'}}, required:['date','desc','amount']}},
-    settings:{type:'object', properties:{horizon:{type:'integer'},weekStart:{type:'integer'}}},
+    settings:{type:'object', properties:{horizon:{type:'integer'},weekStart:{type:'integer'},openingDate:{type:'string'},openingAmount:{type:'number'}}},
     recordSnapshot:{type:'boolean'}
   }}] }
 }, required:['reply','update'] } };
@@ -1148,7 +1163,7 @@ const ACTIONS = {
   delRec: el => { const r = state.recurring.find(x=>x.id===el.dataset.id); if (r && confirm(`Remove ${r.name}?`)){ state.recurring = state.recurring.filter(x=>x!==r); save('recurring'); render(); } },
   editTx: el => txForm(allTx().find(t=>t.id===el.dataset.id)),
   delTx: el => { const t = allTx().find(x=>x.id===el.dataset.id); if (!t) return; const k = monthKey(t.date); state.tx[k] = state.tx[k].filter(x=>x!==t); if (!state.tx[k].length) delete state.tx[k]; save('tx:'+k); render(); },
-  weekDetail: el => { const w = projection().weeks[+el.dataset.i]; modal(`Week of ${fmtDateY(w.start)}`, `<div class="list">${w.rows.map(r=>`<div class="item"><div><div class="t">${esc(r.name)}</div><div class="s">${fmtDateY(r.date)} · ${esc(r.category||'')}${r.past?' · <span class="chip">dated earlier this week</span>':''}</div></div><div class="amt num ${r.amount>0?'pos':''}">${fmtS(r.amount)}</div></div>`).join('')||'<div class="empty">Nothing planned this week</div>'}</div><div class="small muted">In ${fmt(w.inflow)} · Out ${fmt(w.outflow)} · Net ${fmtS(w.net)} · Ending balance <b>${fmtS(w.balance)}</b>${w.i===0?` · Already booked this week: ${fmt(w.actIn)} in, ${fmt(w.actOut)} out`:''}</div>`, {}); },
+  weekDetail: el => { const w = projection().weeks[+el.dataset.i]; modal(`Week of ${fmtDateY(w.start)}`, `<div class="list">${w.rows.map(r=>`<div class="item"><div><div class="t">${esc(r.name)}</div><div class="s">${fmtDateY(r.date)} · ${esc(r.category||'')}${r.actual?' · <span class="chip src">booked</span>':r.past?' · <span class="chip">dated earlier this week</span>':''}</div></div><div class="amt num ${r.amount>0?'pos':''}">${fmtS(r.amount)}</div></div>`).join('')||'<div class="empty">Nothing planned this week</div>'}</div><div class="small muted">In ${fmt(w.inflow)} · Out ${fmt(w.outflow)} · Net ${fmtS(w.net)} · Ending balance <b>${fmtS(w.balance)}</b>${w.i===0?` · Already booked this week: ${fmt(w.actIn)} in, ${fmt(w.actOut)} out`:''}</div>`, {}); },
   exportJson: () => deliver(`pl-app-backup-${iso(today())}.json`, JSON.stringify({exported: new Date().toISOString(), accounts:state.accounts, recurring:state.recurring, history:state.history, settings:state.settings, tx:state.tx}, null, 2), 'application/json'),
   exportCsv: () => deliver(`transactions-${iso(today())}.csv`, toCSV([['Date','Description','Amount','Category','Account','Source'], ...allTx().sort((a,b)=>a.date.localeCompare(b.date)).map(t=>[t.date,t.desc,t.amount.toFixed(2),t.category,t.account||'',t.source||''])]), 'text/csv'),
   eaApply: el => { const m = state.ea[+el.dataset.i]; if (!m || !m.update) return; try { applyUpdate(m.update); m.applied = true; eaSaveHist(); } catch(e){ toast('Could not apply that change'); } render(); },
