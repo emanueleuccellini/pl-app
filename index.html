@@ -361,7 +361,7 @@ let syncMode = 'local';
 const LS_KEY = 'cassa-ledger-v2';
 const GH_KEY = 'cassa-github-v1';
 const DOCS = ['accounts','recurring','history','settings','ea'];
-const APP_VERSION = 'vaee7dece';
+const APP_VERSION = 'v90b10b42';
 
 const ghCfg = () => { try { return JSON.parse(localStorage.getItem(GH_KEY)||'null'); } catch(e){ return null; } };
 const setGhCfg = c => { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch(e){} };
@@ -551,10 +551,24 @@ function projection(){
   return {weeks, low, startBalance: todayBalance, opening: op, currentIndex: firstFutureWeek, accountCash: cashOnHand()};
 }
 /* ---------------- auto-book: planned items become real transactions once their date arrives ---------------- */
+const sameMoney = (a, b) => Math.sign(a)===Math.sign(b) && Math.abs(Math.abs(a)-Math.abs(b)) <= Math.max(1, Math.abs(b)*0.02);
+const daysApart = (a, b) => Math.abs(parseISO(a) - parseISO(b)) / 86400000;
+const sameBucket = (a, b, cashNames) => { const x = String(a||'').toLowerCase(), y = String(b||'').toLowerCase(); return x===y || (cashNames.has(x) && cashNames.has(y)); };   // two cash accounts count as the same bucket
+function matchesReal(date, amount, acct){ const names = cashAccountNames(); return allTx().some(x => x.source!=='plan' && sameBucket(x.account, acct, names) && sameMoney(x.amount, amount) && daysApart(x.date, date) <= 4); }
+function defaultCashAccount(){ const names = cashAccountNames(); const counts = {}; for (const x of allTx()){ const a = String(x.account||'').toLowerCase(); if (names.has(a)) counts[a] = (counts[a]||0)+1; } const best = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0]?.[0]; return (state.accounts.find(a=>a.name.toLowerCase()===best) || state.accounts.find(a=>kindInfo(a.kind)[3]))?.name || ''; }
+function reconcilePlanned(){
+  // drop plan-booked rows that duplicate a real transaction on the same account (same sign, amount within 2%, within 4 days)
+  const touched = new Set(); let removed = 0;
+  const seenPlan = new Set();
+  for (const m of Object.keys(state.tx)){ const before = state.tx[m].length; state.tx[m] = state.tx[m].filter(x => { if (x.source!=='plan') return true; if (matchesReal(x.date, x.amount, x.account)) return false; const k = (x.planId||x.desc)+'|'+x.date; if (seenPlan.has(k)) return false; seenPlan.add(k); return true; }); if (state.tx[m].length !== before){ touched.add('tx:'+m); removed += before - state.tx[m].length; } }
+  if (touched.size) save(...touched);
+  return removed;
+}
 function autoBook(){
+  reconcilePlanned();
   const t = today(); const tI = iso(t);
   if (!state.settings.autoBookFrom){ state.settings.autoBookFrom = tI; save('settings'); }
-  const from = parseISO(state.settings.autoBookFrom); const defaultAcct = state.accounts.find(a=>kindInfo(a.kind)[3])?.name || '';
+  const from = parseISO(state.settings.autoBookFrom); const defaultAcct = defaultCashAccount();
   const have = new Set(allTx().map(x=>x.hash)); const touched = new Set(); let booked = 0;
   const cashNames = cashAccountNames();
   for (const it of state.recurring){
@@ -564,7 +578,9 @@ function autoBook(){
     for (const d of occurrences(it, start, t)){ const di = iso(d); if (it.booked.includes(di)) continue;
       const amount = it.type==='income' ? Math.abs(+it.amount) : -Math.abs(+it.amount); const desc = it.name; const h = txHash(di, desc, amount);
       it.booked.push(di); touched.add('recurring');
-      if (have.has(h)) continue; have.add(h);
+      if (have.has(h)) continue;
+      if (matchesReal(di, amount, acct)) continue;   // the real movement is already in the books (e.g. from the Fidelity import)
+      have.add(h);
       const m = monthKey(di); (state.tx[m] ||= []).push({id:uid(), date:di, desc, amount, category:it.category||'Other', account: it.account || defaultAcct, source:'plan', planId: it.id, hash:h}); touched.add('tx:'+m); booked++; }
   }
   if (touched.size){ save(...touched); }
