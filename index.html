@@ -361,7 +361,7 @@ let syncMode = 'local';
 const LS_KEY = 'cassa-ledger-v2';
 const GH_KEY = 'cassa-github-v1';
 const DOCS = ['accounts','recurring','history','settings','ea'];
-const APP_VERSION = 'v25a34d2a';
+const APP_VERSION = 'v739b15fc';
 
 const ghCfg = () => { try { return JSON.parse(localStorage.getItem(GH_KEY)||'null'); } catch(e){ return null; } };
 const setGhCfg = c => { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch(e){} };
@@ -859,7 +859,7 @@ function renderNetworth(){
     ${kpi('Net worth', fmt(nw.net), prev ? deltaChip(nw.net, prev.netWorth)+'<span>vs '+fmtDate(prev.date)+'</span>' : '')}
     ${kpi('Assets', fmt(nw.assets), `<span>${state.accounts.filter(a=>kindInfo(a.kind)[2]==='asset').length} accounts</span>`)}
     ${kpi('Liabilities', `<span class="neg">${nw.liabilities?'−':''}${fmt(nw.liabilities)}</span>`, `<span>${state.accounts.filter(a=>kindInfo(a.kind)[2]==='liability').length} accounts</span>`)}
-    ${kpi('Since '+(first?fmtDateY(first.date):'start'), first ? deltaChip(nw.net, first.netWorth) : '<span class="muted">—</span>', first?`<span>${fmt(first.netWorth)} then</span>`:'')}
+    ${(() => { if (!first) return kpi('Since start','<span class="muted">—</span>',''); const d = nw.net - first.netWorth; const pct = first.netWorth ? d/first.netWorth*100 : 0; return kpi('Since '+fmtDateY(first.date), `<span class="${d>=0?'pos':'neg'}">${fmtS(d)}</span>`, `<span class="delta ${d>=0?'up':'down'}">${d>=0?'▲':'▼'} ${pct.toFixed(1)}%</span><span>from ${fmt(first.netWorth)}</span>`); })()}
   </div>
   ${(() => { const A = monthlyAnchors(); const dayN = today().getDate(); const sfx = dayN%10===1&&dayN!==11?'st':dayN%10===2&&dayN!==12?'nd':dayN%10===3&&dayN!==13?'rd':'th';
     return `<div class="card" style="margin-bottom:14px"><div class="card-head"><h3>Net worth over time</h3><span class="hint">${state.history.length} snapshots · dots mark the ${dayN}${sfx} of each month</span></div><div class="chart">${lineChart(pts,{color:'var(--nw)',label:'Net worth history',H:220, markers: A.map(a=>a.date)})}</div></div>
