@@ -361,7 +361,7 @@ let syncMode = 'local';
 const LS_KEY = 'cassa-ledger-v2';
 const GH_KEY = 'cassa-github-v1';
 const DOCS = ['accounts','recurring','history','settings','ea'];
-const APP_VERSION = 'v739b15fc';
+const APP_VERSION = 'v03ce64e2';
 
 const ghCfg = () => { try { return JSON.parse(localStorage.getItem(GH_KEY)||'null'); } catch(e){ return null; } };
 const setGhCfg = c => { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch(e){} };
@@ -1068,6 +1068,9 @@ function applyUpdate(d){
   if (Array.isArray(d.accountsUpsert)){ for (const a of d.accountsUpsert){ const ex = findBy(state.accounts, a.id||a.name); if (ex){ Object.assign(ex, {...a, balance: a.balance!=null ? Math.abs(+a.balance) : ex.balance, updated: a.updated || iso(today())}); } else state.accounts.push({id:uid(), name:a.name, kind:a.kind||'checking', balance:Math.abs(+a.balance||0), updated:a.updated||iso(today())}); } keys.push('accounts'); recordSnapshot(true); keys.push('history'); }
   if (Array.isArray(d.accountsDelete)){ for (const r of d.accountsDelete){ const ex = findBy(state.accounts, r); if (ex) state.accounts = state.accounts.filter(x=>x!==ex); } keys.push('accounts'); }
   if (Array.isArray(d.recurringUpsert)){ for (const r of d.recurringUpsert){ const ex = findBy(state.recurring, r.id||r.name); const clean = {...r}; delete clean.id; if (clean.amount!=null) clean.amount = Math.abs(+clean.amount); if (ex) Object.assign(ex, clean); else state.recurring.push({id:uid(), name:r.name, amount:Math.abs(+r.amount||0), type:r.type||'expense', freq:r.freq||'once', day:r.day||1, category:r.category||'Other', active:r.active!==false, anchor:r.anchor||iso(today())}); } keys.push('recurring'); }
+  if (d.recurringReplace && d.recurringReplace.match){ const re = new RegExp(d.recurringReplace.match, 'i'); const gone = state.recurring.filter(x => re.test(x.name||'')); const ids = new Set(gone.map(x=>x.id)); state.recurring = state.recurring.filter(x => !ids.has(x.id));
+    const tI = iso(today()); for (const m of Object.keys(state.tx)){ const before = state.tx[m].length; state.tx[m] = state.tx[m].filter(x => !(x.source==='plan' && ids.has(x.planId) && x.date > tI)); if (state.tx[m].length!==before) keys.push('tx:'+m); }
+    for (const r of d.recurringReplace.items||[]){ if (!r.name) continue; state.recurring.push({id:uid(), name:r.name, amount:Math.abs(+r.amount||0), type:r.type||'expense', freq:r.freq||'once', day:r.day||1, category:r.category||'Other', active:r.active!==false, anchor:r.anchor||iso(today()), ...(r.until?{until:r.until}:{}), ...(r.account?{account:r.account}:{})}); } keys.push('recurring'); }
   if (Array.isArray(d.recurringDelete)){ for (const r of d.recurringDelete){ const ex = findBy(state.recurring, r); if (ex) state.recurring = state.recurring.filter(x=>x!==ex); } keys.push('recurring'); }
   if (Array.isArray(d.txAdd)){ const have = new Set(allTx().map(t=>t.hash)); for (const t of d.txAdd){ if (!t.date || !t.desc || t.amount==null) continue; const h = txHash(t.date,t.desc,t.amount); if (have.has(h)) continue; have.add(h); const m = monthKey(t.date); (state.tx[m] ||= []).push({id:uid(), date:t.date, desc:t.desc, amount:+t.amount, category:t.category||categorize(t.desc), account:t.account||'', source:'ea', hash:h}); keys.push('tx:'+m); added++; } }
   if (Array.isArray(d.txDelete)){ for (const t of d.txDelete){ const h = typeof t==='string' ? t : txHash(t.date,t.desc,t.amount); for (const m of Object.keys(state.tx)){ const before = state.tx[m].length; state.tx[m] = state.tx[m].filter(x=>x.hash!==h); if (state.tx[m].length!==before) keys.push('tx:'+m); } } }
@@ -1155,6 +1158,7 @@ function describeUpdate(u){
   (u.accountsUpsert||[]).forEach(a => L.push(`Account “${a.name}”${a.balance!=null?` → balance ${fmt(a.balance)}`:''}${a.kind?` (${a.kind})`:''}`));
   (u.accountsDelete||[]).forEach(a => L.push(`Remove account “${a}”`));
   (u.recurringUpsert||[]).forEach(r => L.push(`${state.recurring.some(x=>x.name.toLowerCase()===String(r.name).toLowerCase())?'Change':'Add'} “${r.name}”${r.amount!=null?` ${fmt(r.amount)}`:''}${r.freq?` ${r.freq}`:''}${r.day?` day ${r.day}`:''}${r.anchor?` from ${r.anchor}`:''}${r.until?` until ${r.until}`:''}${r.active===false?' (paused)':''}`));
+  if (u.recurringReplace && u.recurringReplace.match){ const re = new RegExp(u.recurringReplace.match,'i'); state.recurring.filter(x=>re.test(x.name||'')).forEach(x => L.push(`Remove “${x.name}”`)); (u.recurringReplace.items||[]).forEach(r => L.push(`Add “${r.name}” ${fmt(r.amount)} ${r.freq||'once'}${r.day?` day ${r.day}`:''}${r.anchor?` from ${r.anchor}`:''}`)); }
   (u.recurringDelete||[]).forEach(r => L.push(`Remove “${r}”`));
   (u.txAdd||[]).forEach(t => L.push(`Record ${fmtS(t.amount)} “${t.desc}” on ${t.date}`));
   (u.txDelete||[]).forEach(t => L.push(`Delete ${fmtS(t.amount)} “${t.desc}” on ${t.date}`));
@@ -1305,7 +1309,7 @@ $('#sync-top').style.cursor='pointer'; $('#sync-top').onclick = () => ACTIONS.sy
 if ('serviceWorker' in navigator){ navigator.serviceWorker.register('./sw.js').then(reg => { reg.update(); }).catch(()=>{}); let reloaded=false; navigator.serviceWorker.addEventListener('controllerchange', () => { if (!reloaded && navigator.serviceWorker.controller){ reloaded=true; location.reload(); } }); }
 window.addEventListener('online', () => syncFromGitHub(true));
 showLock();
-window.__cassa = { get state(){ return state; }, projection, netWorth, save, syncFromGitHub };
+window.__cassa = { get state(){ return state; }, projection, netWorth, save, applyUpdate, describeUpdate, occurrences };
 loadAll().then(() => { try { if (autoBook()) toast('Planned items booked'); } catch(e){ console.warn(e); } try { const local = JSON.parse(localStorage.getItem(EA_KEY)||'null'); if (local && local.key && !state.settings.eaKey){ state.settings.eaKey = local.key; state.settings.eaModel = local.model || 'claude-sonnet-5'; save('settings'); } } catch(e){} render(); }).catch(e => { console.error(e); state.loaded = true; render(); });
 })();
 </script>
