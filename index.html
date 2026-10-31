@@ -361,7 +361,7 @@ let syncMode = 'local';
 const LS_KEY = 'cassa-ledger-v2';
 const GH_KEY = 'cassa-github-v1';
 const DOCS = ['accounts','recurring','history','settings','ea'];
-const APP_VERSION = 'v03ce64e2';
+const APP_VERSION = 'v03ce64e2e';
 
 const ghCfg = () => { try { return JSON.parse(localStorage.getItem(GH_KEY)||'null'); } catch(e){ return null; } };
 const setGhCfg = c => { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch(e){} };
@@ -394,19 +394,21 @@ function save(...keys){
     pending.set(k, setTimeout(() => pushDoc(k), 600));
   }
 }
-async function pushDoc(k, attempt=0){
+let pushChain = Promise.resolve();
+function pushDoc(k){ pushChain = pushChain.then(() => pushDocNow(k)).catch(()=>{}); return pushChain; }   // one write at a time: concurrent commits make GitHub answer 409
+async function pushDocNow(k, attempt=0){
   const path = docPath(k); inflight++; setSync('busy');
   try {
     const content = utf8b64(JSON.stringify(docBody(k)));
     const r = await gh(`${repoPath()}/contents/${path}`, { method:'PUT', body: JSON.stringify({ message: `pl-app: update ${path}`, content, sha: shas[path], branch: ghCfg().branch || 'main' }) });
     if (r.status === 409 || r.status === 422){
       // someone else wrote first: merge theirs in, then retry once
-      if (attempt < 1){ await pullDoc(path, true); return pushDoc(k, attempt+1); }
-      throw new Error('conflict');
+      if (attempt < 3){ await pullDoc(path, true); return pushDocNow(k, attempt+1); }
+      let msg=''; try { msg = (await r.json()).message || ''; } catch(_){} throw new Error('HTTP '+r.status+' conflict'+(msg?' — '+msg:''));
     }
-    if (!r.ok) throw new Error('HTTP '+r.status);
+    if (!r.ok){ let msg=''; try { msg = (await r.json()).message || ''; } catch(_){} throw new Error('HTTP '+r.status+(msg?' — '+msg:'')); }
     const j = await r.json(); shas[path] = j.content.sha; lsSet();
-  } catch(e){ console.warn('push failed', path, e); setSync('local', 'Saved on this device — will retry'); pending.set(k, setTimeout(() => pushDoc(k), 30000)); return; }
+  } catch(e){ console.warn('push failed', path, e); window.__lastPushError = `${path}: ${e.message}`; setSync('local', 'Not saved to GitHub — '+e.message); if (!window.__pushToastAt || Date.now()-window.__pushToastAt > 60000){ window.__pushToastAt = Date.now(); toast('Could not save to GitHub ('+e.message+') — kept on this device'); } pending.set(k, setTimeout(() => pushDoc(k), 30000)); return; }
   finally { inflight--; }
   if (!inflight) setSync('on');
 }
@@ -881,6 +883,7 @@ function renderSettings(){
   return `
   <div class="page-head"><div><h1>Settings</h1><p>${today().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})}</p></div>
     <div class="actions"><button class="btn" data-act="syncNow">Sync now</button><button class="btn ${ghCfg()?'':'primary'}" data-act="connect">${ghCfg()?'Reconnect':'Connect'}</button>${ghCfg()?'<button class="btn ghost" data-act="disconnect">Disconnect</button>':''}</div></div>
+  ${window.__lastPushError?`<div class="card" style="border-color:var(--bad,#c0392b)"><div class="small"><b>Last save to GitHub failed</b><br>${esc(window.__lastPushError)}<br><span class="muted">Usually the token lacks “Contents: Read and write” on the data repository, or it expired. Fix it on GitHub, then press Reconnect and Sync now.</span></div></div>`:''}
   <div class="grid eq">
     <div class="card"><h3>Projection</h3>
       <div class="f2" style="margin-top:12px">
@@ -1227,7 +1230,7 @@ const ACTIONS = {
   applyUpdate: () => { const inp = document.createElement('input'); inp.type='file'; inp.accept='.json,application/json'; inp.onchange = () => { const f = inp.files[0]; if (!f) return; f.text().then(t => { try { applyUpdate(JSON.parse(t)); } catch(e){ toast('That file is not a valid update'); } }); }; inp.click(); },
   importJson: () => { modal('Restore backup', `<div class="f"><label for="fx-json">Paste the backup JSON (or open the file and copy its contents)</label><textarea id="fx-json" name="json" required></textarea></div><div class="f"><span class="help">This replaces everything currently in the ledger.</span></div>`, {okLabel:'Restore', danger:true, onOk: form => { try { const d = JSON.parse(form.json.value); if (!d || !Array.isArray(d.accounts)) throw 0; state.accounts=d.accounts; state.recurring=d.recurring||[]; state.history=d.history||[]; state.settings={...state.settings,...(d.settings||{}), sample:false}; state.tx=d.tx||{}; save(...DOCS, ...Object.keys(state.tx).map(m=>'tx:'+m)); render(); toast('Backup restored'); } catch(e){ toast('That does not look like a ledger backup'); return false; } }}); },
   wipe: () => { if (confirm('Erase all accounts, items, transactions and history? This cannot be undone.')) startFresh(); },
-  syncNow: async () => { const ok = await syncFromGitHub(true); toast(ok ? 'Up to date' : (ghCfg() ? 'Could not reach GitHub' : 'Connect first')); render(); },
+  syncNow: async () => { const retry = [...pending.keys()]; for (const k of retry){ clearTimeout(pending.get(k)); pending.delete(k); } window.__lastPushError = null; await Promise.all(retry.map(k => pushDoc(k))); const ok = await syncFromGitHub(true); toast(window.__lastPushError ? 'Some changes could not be saved to GitHub — see Settings' : ok ? 'Up to date' : (ghCfg() ? 'Could not reach GitHub' : 'Connect first')); render(); },
   connect: () => connectForm(),
   disconnect: () => { if (confirm('Disconnect this device from GitHub? Your data stays in the repository; this device keeps a local copy.')) { setGhCfg(null); setSync('local','Not connected'); render(); } },
 };
