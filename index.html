@@ -361,7 +361,7 @@ let syncMode = 'local';
 const LS_KEY = 'cassa-ledger-v2';
 const GH_KEY = 'cassa-github-v1';
 const DOCS = ['accounts','recurring','history','settings','ea'];
-const APP_VERSION = 'v03ce64e2e';
+const APP_VERSION = 'v03ce64e2f';
 
 const ghCfg = () => { try { return JSON.parse(localStorage.getItem(GH_KEY)||'null'); } catch(e){ return null; } };
 const setGhCfg = c => { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch(e){} };
@@ -881,7 +881,7 @@ function renderNetworth(){
 function renderSettings(){
   const count = allTx().length;
   return `
-  <div class="page-head"><div><h1>Settings</h1><p>${today().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})}</p></div>
+  <div class="page-head"><div><h1>Settings</h1><p>${today().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})} · app ${APP_VERSION}</p></div>
     <div class="actions"><button class="btn" data-act="syncNow">Sync now</button><button class="btn ${ghCfg()?'':'primary'}" data-act="connect">${ghCfg()?'Reconnect':'Connect'}</button>${ghCfg()?'<button class="btn ghost" data-act="disconnect">Disconnect</button>':''}</div></div>
   ${window.__lastPushError?`<div class="card" style="border-color:var(--bad,#c0392b)"><div class="small"><b>Last save to GitHub failed</b><br>${esc(window.__lastPushError)}<br><span class="muted">Usually the token lacks “Contents: Read and write” on the data repository, or it expired. Fix it on GitHub, then press Reconnect and Sync now.</span></div></div>`:''}
   <div class="grid eq">
