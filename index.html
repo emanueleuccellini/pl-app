@@ -361,7 +361,7 @@ let syncMode = 'local';
 const LS_KEY = 'cassa-ledger-v2';
 const GH_KEY = 'cassa-github-v1';
 const DOCS = ['accounts','recurring','history','settings','ea'];
-const APP_VERSION = 'v03ce64e2f';
+const APP_VERSION = 'v03ce64e2g';
 
 const ghCfg = () => { try { return JSON.parse(localStorage.getItem(GH_KEY)||'null'); } catch(e){ return null; } };
 const setGhCfg = c => { try { if (c) localStorage.setItem(GH_KEY, JSON.stringify(c)); else localStorage.removeItem(GH_KEY); } catch(e){} };
@@ -540,7 +540,8 @@ function projection(){
     }
     if (!isPast){
       const from = isCurrent ? addDays(t, 1) : ws;   // anything dated today or earlier has been booked as a transaction already
-      for (const it of items){ for (const d of occurrences(it, from, we)){ rows.push({date: iso(d), name: it.name, amount: it.type==='income' ? +it.amount : -Math.abs(+it.amount), category: it.category}); } }
+      for (const it of items){ for (const d of occurrences(it, from, we)){ const amount = it.type==='income' ? +it.amount : -Math.abs(+it.amount); if (isCurrent && matchesReal(iso(d), amount, it.account || defaultCashAccount(), it.category)) continue;   // already arrived early (e.g. payroll paid on the 12th instead of the 15th)
+        rows.push({date: iso(d), name: it.name, amount, category: it.category}); } }
     }
     const inflow = sum(rows.filter(r=>r.amount>0).map(r=>r.amount)), outflow = -sum(rows.filter(r=>r.amount<0).map(r=>r.amount));
     let actIn=0, actOut=0; if (isCurrent){ for (const x of actualsBetween(iso(ws), iso(we))){ if (x.amount>0) actIn+=x.amount; else actOut-=x.amount; } }
@@ -556,7 +557,8 @@ function projection(){
 const sameMoney = (a, b, tol=0.01, cap=25) => Math.sign(a)===Math.sign(b) && Math.abs(Math.abs(a)-Math.abs(b)) <= Math.min(Math.max(1, Math.abs(b)*tol), cap);   // tight: a planned rent must not be mistaken for a similar-sized card payment
 const daysApart = (a, b) => Math.abs(parseISO(a) - parseISO(b)) / 86400000;
 const sameBucket = (a, b, cashNames) => { const x = String(a||'').toLowerCase(), y = String(b||'').toLowerCase(); return x===y || (cashNames.has(x) && cashNames.has(y)); };   // two cash accounts count as the same bucket
-function matchesReal(date, amount, acct){ const names = cashAccountNames(); return allTx().some(x => x.source!=='plan' && sameBucket(x.account, acct, names) && sameMoney(x.amount, amount) && daysApart(x.date, date) <= 4); }
+function matchesReal(date, amount, acct, category){ const names = cashAccountNames(); const loose = c => category && c && category===c && category!=='Other';   // same category (payroll vs payroll, card payment vs card payment): allow the usual variance of a paycheck or a statement; otherwise stay tight
+  return allTx().some(x => x.source!=='plan' && sameBucket(x.account, acct, names) && (loose(x.category) ? sameMoney(x.amount, amount, 0.03, 1000) : sameMoney(x.amount, amount)) && daysApart(x.date, date) <= 4); }
 function defaultCashAccount(){ const names = cashAccountNames(); const counts = {}; for (const x of allTx()){ const a = String(x.account||'').toLowerCase(); if (names.has(a)) counts[a] = (counts[a]||0)+1; } const best = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0]?.[0]; return (state.accounts.find(a=>a.name.toLowerCase()===best) || state.accounts.find(a=>kindInfo(a.kind)[3]))?.name || ''; }
 function coverageDate(){ // latest real (imported/manual) movement on a cash account: the plan must not re-create what the statements already cover
   const names = cashAccountNames(); let d = null;
@@ -567,7 +569,7 @@ function reconcilePlanned(){
   // drop plan-booked rows that duplicate a real transaction on the same account (same sign, amount within 2%, within 4 days)
   const touched = new Set(); let removed = 0;
   const seenPlan = new Set(); const cov = coverageDate(); const freqOf = id => state.recurring.find(r=>r.id===id)?.freq;
-  for (const m of Object.keys(state.tx)){ const before = state.tx[m].length; state.tx[m] = state.tx[m].filter(x => { if (x.source!=='plan') return true; if (matchesReal(x.date, x.amount, x.account)) return false; if (cov && x.date <= cov && freqOf(x.planId) && freqOf(x.planId) !== 'once') return false; const k = (x.planId||x.desc)+'|'+x.date; if (seenPlan.has(k)) return false; seenPlan.add(k); return true; }); if (state.tx[m].length !== before){ touched.add('tx:'+m); removed += before - state.tx[m].length; } }
+  for (const m of Object.keys(state.tx)){ const before = state.tx[m].length; state.tx[m] = state.tx[m].filter(x => { if (x.source!=='plan') return true; if (matchesReal(x.date, x.amount, x.account, x.category)) return false; if (cov && x.date <= cov && freqOf(x.planId) && freqOf(x.planId) !== 'once') return false; const k = (x.planId||x.desc)+'|'+x.date; if (seenPlan.has(k)) return false; seenPlan.add(k); return true; }); if (state.tx[m].length !== before){ touched.add('tx:'+m); removed += before - state.tx[m].length; } }
   if (touched.size) save(...touched);
   return removed;
 }
@@ -587,7 +589,7 @@ function autoBook(){
       const amount = it.type==='income' ? Math.abs(+it.amount) : -Math.abs(+it.amount); const desc = it.name; const h = txHash(di, desc, amount);
       it.booked.push(di); touched.add('recurring');
       if (have.has(h)) continue;
-      if (matchesReal(di, amount, acct)) continue;   // the real movement is already in the books (e.g. from the Fidelity import)
+      if (matchesReal(di, amount, acct, it.category)) continue;   // the real movement is already in the books (e.g. from the Fidelity import)
       have.add(h);
       const m = monthKey(di); (state.tx[m] ||= []).push({id:uid(), date:di, desc, amount, category:it.category||'Other', account: it.account || defaultAcct, source:'plan', planId: it.id, hash:h}); touched.add('tx:'+m); booked++; }
   }
